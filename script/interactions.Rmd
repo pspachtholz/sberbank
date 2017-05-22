@@ -1,0 +1,31 @@
+---
+title: "Interactions"
+output: 
+  html_notebook:
+    fig_height: 4
+    fig_width: 6
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+  library(readr)
+  library(RSA)
+  library(dplyr)
+  #setwd("~/Desktop/Machine Learning/Kaggle/Sberbank")
+  setwd("D:/Eigene Dateien/sonstiges/Kaggle/Sberbank/Git/sberbank")
+  
+  train <- read_csv('./input/train.csv')
+```
+
+```{r}
+tmp <- train %>% filter(full_sq < 2000 & life_sq < 2000) %>% mutate(f_sc = scale(full_sq,center=T,scale=T), l_sc = scale(life_sq,center=T,scale=T), logprice = log(price_doc+1))
+
+
+  fit <- RSA(logprice ~ f_sc*l_sc, data= tmp, center=T, scale=T, out.rm=T,na.rm=T, missing = "listwise")
+ 
+```
+

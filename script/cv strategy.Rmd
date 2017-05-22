@@ -1,0 +1,207 @@
+---
+title: "Best cross-validation strategy: 0.328x CV 0.328x LB"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## libraries and data loading
+```{r warning = FALSE, message = FALSE, cache = FALSE}
+  library(readr)
+  library(caret)
+  library(dplyr)
+  library(xgboost)
+  library(Matrix)
+  library(lubridate)
+
+  train <- read_csv('./input/train.csv')
+  test <- read_csv('./input/test.csv')
+  test_ids <- test$id
+```
+
+
+## Select some basic features
+```{r warning = FALSE, message = FALSE, cache = FALSE}
+outcome <- "price_doc"
+basic_features <- c(outcome,"timestamp","full_sq", "life_sq", "kitch_sq", "num_room", "floor", "max_floor", "material", "build_year", "state", "product_type", "sub_area")
+
+train <- select(train, one_of(basic_features))
+test <- select(test, one_of(basic_features))
+```
+
+
+## Data cleaning
+```{r}
+## full area
+train <- train %>% mutate(full_sq = ifelse((full_sq > 800 | full_sq <= 1), NA, full_sq))
+test <- test %>% mutate(full_sq = ifelse((full_sq > 800 | full_sq <= 1), NA, full_sq))
+
+## living area
+train <- train %>% mutate(life_sq = ifelse(life_sq > 400 | life_sq <= 1, NA, life_sq))
+test <- test %>% mutate(life_sq = ifelse(life_sq > 400 | life_sq <= 1, NA, life_sq))
+
+## kitchen area
+train <- train %>% mutate(kitch_sq = as.numeric(kitch_sq),kitch_sq = ifelse(kitch_sq > 200 | kitch_sq <= 1, NA, kitch_sq))
+test <- test %>% mutate(kitch_sq = as.numeric(kitch_sq),kitch_sq = ifelse(kitch_sq > 200 | kitch_sq <= 1, NA, kitch_sq))
+
+## num rooms
+train <- train %>% mutate(num_room = as.numeric(num_room))
+test <- test %>% mutate(num_room = as.numeric(num_room))
+
+## build year
+train <- train %>% mutate(build_year = as.numeric(build_year), build_year = ifelse(build_year > 2018 | build_year < 1860, NA, build_year))
+test <- test %>% mutate(build_year = as.numeric(build_year), build_year = ifelse(build_year > 2018 | build_year < 1860, NA, build_year))
+
+## floor
+train <- train %>% mutate(floor = ifelse(floor > 45, NA, floor))
+test <- test %>% mutate(floor = ifelse(floor > 45, NA, floor))
+
+## max floor
+train <- train %>% mutate(max_floor = as.numeric(max_floor),max_floor = ifelse(max_floor > 60 | max_floor <=1, NA, max_floor))
+test <- test %>% mutate(max_floor = as.numeric(max_floor),max_floor = ifelse(max_floor > 60 | max_floor <=1, NA, max_floor))
+
+## state
+train <- train %>% mutate(state = as.numeric(state), state = ifelse(state > 4, NA, state))
+test <- test %>% mutate(state = as.numeric(state), state = ifelse(state > 4, NA, state))
+
+## material
+train <- train %>% mutate(material = as.numeric(material), material = ifelse(material == 3, NA, material))
+test <- test %>% mutate(material = as.numeric(material), material = ifelse(material == 3, NA, material))
+
+## product type
+train <- train %>% mutate(product_type = factor(product_type))
+test <- test %>% mutate(product_type = factor(product_type))
+
+##subarea
+train <- train %>% mutate(sub_area = factor(sub_area))
+test <- test %>% mutate(sub_area = factor(sub_area))
+
+```
+
+
+# validation strategy
+
+Now here it comes
+
+```{r}
+train$strange_990000 <- train$price_doc %in% c(990000)
+train$strange_1000000 <- train$price_doc %in% c(1000000)
+train$strange_2000000 <- train$price_doc %in% c(2000000)
+train$strange_3000000 <- train$price_doc %in% c(3000000)
+
+train$year_month <- make_date(year = year(train$timestamp), month=month(train$timestamp))
+test$year_month <- make_date(year = year(test$timestamp), month=month(test$timestamp))
+
+
+tt<-train %>% group_by(year_month) %>% summarize(m99 = mean(strange_990000),m100=mean(strange_1000000),m200=mean(strange_2000000),m300=mean(strange_3000000),n=n(),ev99=m99*n,ev100=m100*n,ev200=m200*n,ev300=m300*n)
+
+# percentage of strange values in train set
+perc_strange_train <- colSums(tt[7:10])/30471
+
+
+# fit model and make predictions on test set
+fit99 <- lm(strange_990000 ~ year_month,data=train)
+fit100 <- glm(strange_1000000 ~ year_month,data=train)
+fit200 <- lm(strange_2000000 ~ year_month,data=train)
+fit300 <- lm(strange_3000000 ~ year_month,data=train)
+
+test$strange_990000 <- predict(fit99,test)
+test$strange_1000000 <- predict(fit100,test)
+test$strange_2000000 <- predict(fit200,test)
+test$strange_3000000 <- predict(fit300,test)
+
+tt <- test %>% select(strange_990000,strange_1000000,strange_2000000,strange_3000000,year_month)
+tt2 <- tt %>% group_by(year_month) %>% summarize(m99 = mean(strange_990000),m100=mean(strange_1000000),m200=mean(strange_2000000),m300=mean(strange_3000000),n=n(),ev99=m99*n,ev100=m100*n,ev200=m200*n,ev300=m300*n)
+
+# percentage of strange values in train set
+perc_strange_test <- colSums(tt2[7:10])/7662
+
+
+samplecoeffs <- perc_strange_test/perc_strange_train
+
+```
+
+
+# model fit
+```{r}
+rowsstd <- train[which(!(train$price_doc %in% c(990000,1000000,2000000))),]
+rows100 <- sample_frac(train[train$price_doc == 1000000,],0.149584)
+rows200 <- sample_frac(train[train$price_doc == 2000000,],0.381556)
+
+train <- rbind(rowsstd,rows100,rows200)
+
+outcomes <- train$price_doc
+train <- select(train, -price_doc, -strange_990000, -strange_1000000, -strange_2000000, -strange_3000000, -year_month, -timestamp)
+test <- select(test,-strange_990000, -strange_1000000, -strange_2000000, -strange_3000000, -year_month, -timestamp)
+
+dummy <- dummyVars(~.,train)
+train_matrix <- predict(dummy,train)
+test_matrix <- predict(dummy,test)
+
+train_sparse <- Matrix(train_matrix,sparse = T)
+test_sparse <- Matrix(test_matrix,sparse = T)
+
+dtrain <- xgb.DMatrix(data = train_sparse,label=log(outcomes))
+dtest <- xgb.DMatrix(data=test_sparse)
+
+
+# Params for xgboost
+param <- list(objective="reg:linear",
+              eval_metric = "rmse",
+              eta = .05,
+              gamma = 1,
+              max_depth = 4,
+              min_child_weight = 1,
+              subsample = .7,
+              colsample_bytree = .7
+)
+
+#Cross validation - determine CV scores & optimal amount of rounds
+xgb_cv <- xgb.cv(data = dtrain,
+                nfold = 5,
+                params = param,
+                nrounds = 150000,
+                maximize = FALSE,
+                prediction = TRUE,
+                print_every_n = 5,
+                early_stopping_round = 100
+);gc()
+
+
+
+rounds <- xgb_cv$best_iteration
+
+
+# Train model
+cat("XGB training")
+xgb_model <- xgb.train(data = dtrain,
+                       params = param,
+                       watchlist = list(train = dtrain),
+                       nrounds = rounds,
+                       verbose = 1,
+                       print.every.n = 5
+);gc()
+
+# Predict and output csv
+preds <- predict(xgb_model,dtest)
+preds <- exp(preds)
+write.table(data.frame(id=test_ids, price_doc=preds), "submission.csv", sep=",", dec=".", quote=FALSE, row.names=FALSE)
+
+```
+
+
+
+
+## Problem 1: wrong scale nivau
+
+## Area measures 0 and 1 seem to not make sense
+
+
+## Problem 1: Outliers for Area (full and live)
+## Problem 2: build year has strange values
+## Problem 3: sometimes max_floor > floor
+
+## some values in kitch_sq are years possibly build_year
+

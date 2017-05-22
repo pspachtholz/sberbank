@@ -1,0 +1,469 @@
+---
+title: "Data cleaning"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/Desktop/Machine Learning/Kaggle/Sberbank/sberbank")
+
+```
+```{r}
+  library(readr)
+  library(caret)
+  library(dplyr)
+  library(xgboost)
+  library(lubridate)
+  library(Matrix)
+
+  train <- read_csv('./input/train.csv')
+  test <- read_csv('./input/test.csv')
+```
+
+
+# Basic features
+```{r}
+outcome <- "price_doc"
+outcomes <- train[[outcome]]
+train_ids <- train$id
+test_ids <- test$id
+basic_features <- c(outcome,"timestamp", "full_sq", "life_sq", "kitch_sq", "num_room", "floor", "max_floor", "material", "build_year", "state", "product_type", "sub_area")
+predictors <- setdiff(basic_features,outcome)
+
+```
+
+
+```{r}
+train <- select(train, one_of(basic_features))
+test <- select(test, one_of(c(predictors,"id")))
+```
+
+## Price Doc
+```{r}
+#potentially remove these rows from train set
+train <- train %>% mutate(strange_price_doc = ifelse(price_doc %in% c(990000,999000,1000000,1100000,2000000,3000000), 1,0))
+```
+
+## Full square
+```{r}
+# deal with outliers
+str(train$full_sq)
+table(train$full_sq)
+train <- train %>% mutate(strange_full_sq = ifelse(full_sq <= 1, full_sq+1,0), full_sq = ifelse(full_sq > 800 | full_sq <= 1, NA, full_sq))
+test <- test %>% mutate(strange_full_sq = ifelse(full_sq <= 1, full_sq+1,0), full_sq = ifelse(full_sq > 800 | full_sq <= 1, NA, full_sq))
+```
+
+## Living area 
+```{r}
+# deal with outliers
+str(train$life_sq)
+table(train$life_sq)
+train <- train %>% mutate(strange_life_sq = ifelse(life_sq <= 1, life_sq+1,0), strange_life_sq= ifelse(is.na(strange_life_sq),0,strange_life_sq), life_sq = ifelse(life_sq > 400 | life_sq <= 1, NA, life_sq))
+test <- test %>% mutate(strange_life_sq = ifelse(life_sq <= 1, life_sq+1,0), strange_life_sq= ifelse(is.na(strange_life_sq),0,strange_life_sq), life_sq = ifelse(life_sq > 400 | life_sq <= 1, NA, life_sq))
+```
+
+## Kitchen area 
+```{r}
+# deal with outliers
+str(train$kitch_sq)
+table(train$kitch_sq)
+
+train <- train %>% mutate(kitch_sq = as.numeric(kitch_sq),strange_kitch_sq = ifelse(kitch_sq <= 1, kitch_sq+1,0), strange_kitch_sq = ifelse(is.na(strange_kitch_sq),0, strange_kitch_sq),kitch_sq = ifelse(kitch_sq > 200 | kitch_sq <= 1, NA, kitch_sq))
+test <- test %>% mutate(kitch_sq = as.numeric(kitch_sq),strange_kitch_sq = ifelse(kitch_sq <= 1, kitch_sq+1,0), strange_kitch_sq = ifelse(is.na(strange_kitch_sq),0, strange_kitch_sq),kitch_sq = ifelse(kitch_sq > 200 | kitch_sq <= 1, NA, kitch_sq))
+```
+
+## Number of living rooms
+```{r}
+str(train$num_room)
+table(train$num_room)
+table(test$num_room)
+
+train <- train %>% mutate(num_room = as.numeric(num_room))
+test <- test %>% mutate(num_room = as.numeric(num_room))
+#ok
+```
+
+
+## build year
+```{r}
+str(train$build_year)
+train$build_year <- as.numeric(train$build_year)
+table(train$build_year)
+
+train <- train %>% mutate(build_year = as.numeric(build_year), strange_build_year = ifelse(build_year <= 1, build_year+1,0),
+strange_build_year = ifelse(is.na(strange_build_year),0, strange_build_year), build_year = ifelse(build_year > 2018 | build_year < 1860, NA, build_year))
+
+test <- test %>% mutate(build_year = as.numeric(build_year), strange_build_year = ifelse(build_year <= 1, build_year+1,0),
+strange_build_year = ifelse(is.na(strange_build_year),0, strange_build_year), build_year = ifelse(build_year > 2018 | build_year < 1860, NA, build_year))
+
+table(train$build_year)
+table(test$build_year)
+```
+## floor
+```{r}
+str(train$floor)
+table(train$floor)
+str(test$floor)
+table(test$floor)
+
+train <- train %>% mutate(floor = ifelse(floor > 45, NA, floor))
+test <- test %>% mutate(floor = ifelse(floor > 45, NA, floor))
+```
+
+## max floor
+```{r}
+str(train$max_floor)
+train <- train %>% mutate(max_floor = as.numeric(max_floor))
+table(train$max_floor)
+str(test$floor)
+table(test$floor)
+
+train <- train %>% mutate(max_floor = as.numeric(max_floor), strange_max_floor = ifelse(max_floor <= 1, max_floor+1,0), strange_max_floor = ifelse(is.na(strange_max_floor),0,strange_max_floor),max_floor = ifelse(max_floor > 60 | max_floor <=1, NA, max_floor))
+
+
+test <- test %>% mutate(max_floor = as.numeric(max_floor), strange_max_floor = ifelse(max_floor <= 1, max_floor+1,0), strange_max_floor = ifelse(is.na(strange_max_floor),0,strange_max_floor),max_floor = ifelse(max_floor > 60 | max_floor <=1, NA, max_floor))
+```
+
+
+## state
+```{r}
+str(train$state)
+train <- train %>% mutate(state = as.numeric(state))
+table(train$state)
+str(test$state)
+table(test$state)
+
+train <- train %>% mutate(state = as.numeric(state), state = ifelse(state > 4, NA, state))
+test <- test %>% mutate(state = as.numeric(state), state = ifelse(state > 4, NA, state))
+
+```
+
+## material
+```{r}
+str(train$material)
+train <- train %>% mutate(material = as.numeric(material))
+table(train$material)
+str(test$material)
+table(test$material)
+
+train <- train %>% mutate(material = as.factor(material), material = ifelse(material == 3, NA, material))
+test <- test %>% mutate(material = as.factor(material), material = ifelse(material == 3, NA, material))
+
+```
+
+
+## product_type
+```{r}
+str(train$product_type)
+train <- train %>% mutate(product_type = factor(product_type))
+table(train$product_type)
+str(test$product_type)
+test <- test %>% mutate(product_type = factor(product_type))
+table(test$product_type)
+
+```
+
+# Subarea
+```{r}
+train <- train %>% mutate(sub_area = factor(sub_area))
+test <- test %>% mutate(sub_area = factor(sub_area))
+
+```
+
+# Feature engineering
+```{r}
+# floor by max_floor
+train <- train %>% mutate(floor_by_maxfloor = floor/max_floor, floor_by_maxfloor=ifelse(floor_by_maxfloor>1,NA,floor_by_maxfloor))
+test <- test %>% mutate(floor_by_maxfloor = floor/max_floor, floor_by_maxfloor=ifelse(floor_by_maxfloor>1,NA,floor_by_maxfloor))
+
+# average room size
+train <- train %>% mutate(roomsize = (life_sq-kitch_sq)/num_room, roomsize=ifelse(roomsize<=0 | roomsize > 200, NA,roomsize)) 
+test <- test %>% mutate(roomsize = (life_sq-kitch_sq)/num_room, roomsize=ifelse(roomsize<=0 | roomsize > 200, NA,roomsize))
+
+# relative proportion of area for life kitchen
+train <- train %>% mutate(life_proportion = life_sq/full_sq)
+test <- test %>% mutate(life_proportion = life_sq/full_sq)
+
+train <- train %>% mutate(kitchen_proportion = kitch_sq/full_sq)
+test <- test %>% mutate(kitchen_proportion = kitch_sq/full_sq)
+
+
+# age when sold
+train <- train %>% mutate(age = -interval(timestamp, make_date(year=build_year)) / years(1))
+test <- test %>% mutate(age = -interval(timestamp, make_date(year=build_year)) / years(1))
+
+# year 
+train <- train %>% mutate(year = year(timestamp))
+test <- test %>% mutate(year = year(timestamp))
+
+# year_month
+train <- train %>% mutate(year_month = make_date(year(timestamp),month(timestamp)))
+test <- test %>% mutate(year_month = make_date(year(timestamp),month(timestamp)))
+
+# day of week
+train <- train %>% mutate(day_of_week = wday(train$timestamp))
+test <- test %>% mutate(day_of_week = wday(test$timestamp))
+
+# day of month
+train <- train %>% mutate(day_of_month = mday(train$timestamp))
+test <- test %>% mutate(day_of_month = mday(test$timestamp))
+
+
+# month of year
+train <- train %>% mutate(month_of_year = month(train$timestamp))
+test <- test %>% mutate(day_of_week = month(test$timestamp))
+
+# week of year
+train <- train %>% mutate(week_of_year = week(train$timestamp))
+test <- test %>% mutate(week_of_year = week(test$timestamp))
+
+
+# sales per month
+train <- train %>% group_by(year_month) %>% summarize(n_sales = n()) %>% left_join(train,by="year_month")
+test <- test %>% group_by(year_month) %>% summarize(n_sales = n()) %>% left_join(test,by="year_month")
+
+# okrugs
+okrugs <- read_csv('./input/okrugs.csv')
+names(okrugs)[1]<-"sub_area"
+train <- train %>% left_join(okrugs,by="sub_area")
+test <- test %>% left_join(okrugs,by="sub_area")
+
+# average price by raion
+train <- train %>% group_by(sub_area) %>% summarize(mean_price_raion = mean(price_doc)) %>% right_join(train,by="sub_area")
+test <- train %>% group_by(sub_area) %>% summarize(mean_price_raion = mean(price_doc)) %>% right_join(test,by="sub_area")
+
+# average price per sqm per raion
+
+
+
+# average price by raion per year
+train <- train %>% group_by(sub_area, year) %>% summarize(mean_price_raion_year = mean(price_doc)) %>% right_join(train,by="sub_area")
+test <- train %>% group_by(sub_area, year) %>% summarize(mean_price_raion_year = mean(price_doc)) %>% right_join(test,by="sub_area")
+
+# population density per raion
+train <- train %>% mutate(pop_density_raion = raion_popul/area_m)
+test <- test %>% mutate(pop_density_raion = raion_popul/area_m)
+
+# average building hight per raion (to do - full dataset)
+train <- train %>% group_by(sub_area) %>% summarize(mean_building_height = mean(max_floor,na.rm=T)) %>% left_join(train,by="sub_area")
+
+# longitude latitude of raions (to do)
+
+# number of missing values per row (to do)
+
+# num of floor from top 
+train <- train %>% mutate(floor_from_top = max_floor - floor)
+test <- test %>% mutate(floor_from_top = max_floor - floor)
+
+# extra area
+train <- train %>% mutate(extra_floor = full_sq - life_sq)
+test <- test %>% mutate(extra_floor = full_sq - life_sq)
+
+# average distance to important things
+
+
+####
+train_df["ratio_preschool"] = train_df["children_preschool"] / train_df["preschool_quota"].astype("float")
+test_df["ratio_preschool"] = test_df["children_preschool"] / test_df["preschool_quota"].astype("float")
+
+train_df["ratio_school"] = train_df["children_school"] / train_df["school_quota"].astype("float")
+test_df["ratio_school"] = test_df["children_school"] / test_df["school_quota"].astype("float")
+
+
+####
+population_cols = ['full_all', 'young_all', 'work_all', 'ekder_all', '0_6_all', '7_14_all',
+                   '0_17_all',  '16_29_all',  '0_13_all']
+for col in population_cols[1:]:
+    col_name = col + "_percent"
+    merged_encoded[col_name] = merged_encoded[col] / merged_encoded["full_all"]
+
+####
+for col in building_type_cols[1:]:
+    col_name = col + "_percent"
+    merged_encoded[col_name] = merged_encoded[col] / merged_encoded["raion_build_count_with_material_info"]
+    
+building_year_cols = ['raion_build_count_with_builddate_info', 'build_count_before_1920',
+ 'build_count_1921-1945', 'build_count_1946-1970', 'build_count_1971-1995', 'build_count_after_1995']
+#####
+for col in building_year_cols[1:]:
+    col_name = col + "_percent"
+    merged_encoded[col_name] = merged_encoded[col] / merged_encoded["raion_build_count_with_builddate_info"]    
+
+```
+
+
+# model fit
+```{r}
+rowsstd <- train[which(!(train$price_doc %in% c(1000000,2000000))),]
+rows100 <- sample_frac(train[train$price_doc == 1000000,],0.0149584)
+rows200 <- sample_frac(train[train$price_doc == 2000000,],0.081556)
+
+train0 <- rbind(rowsstd,rows100,rows200)
+outcomes0 <- train0$price_doc
+train0 <- select(train0, -price_doc, -strange_price_doc, -timestamp, -year_month, -year)
+
+train1 <- train %>% filter(product_type == "OwnerOccupier")
+test1 <- test %>% filter(product_type == "OwnerOccupier")
+outcomes1 <- train1$price_doc
+
+train1 <- select(train1, -price_doc, -strange_price_doc, -timestamp, -year_month, -year)
+
+train2 <- train %>% filter(product_type == "Investment")
+test2 <- test %>% filter(product_type == "Investment")
+outcomes2 <- train2$price_doc
+
+train2 <- select(train2, -price_doc, -strange_price_doc, -timestamp, -year_month, -year)
+
+
+dummy <- dummyVars(~.,train0)
+train_matrix0 <- predict(dummy,train0)
+test_matrix0 <- predict(dummy,test)
+
+train_sparse0 <- Matrix(train_matrix0,sparse = T)
+test_sparse0 <- Matrix(test_matrix0,sparse = T)
+dtrain0 <- xgb.DMatrix(data = train_sparse0,label=log(outcomes0))
+dtest0<- xgb.DMatrix(data=test_sparse0)
+
+dummy <- dummyVars(~.,train1)
+train_matrix1 <- predict(dummy,train1)
+test_matrix1 <- predict(dummy,test1)
+
+train_sparse1 <- Matrix(train_matrix1,sparse = T)
+test_sparse1 <- Matrix(test_matrix1,sparse = T)
+dtrain1 <- xgb.DMatrix(data = train_sparse1,label=log(outcomes1))
+dtest1 <- xgb.DMatrix(data=test_sparse1)
+
+dummy <- dummyVars(~.,train2)
+train_matrix2 <- predict(dummy,train2)
+test_matrix2 <- predict(dummy,test2)
+
+train_sparse2 <- Matrix(train_matrix2,sparse = T)
+test_sparse2 <- Matrix(test_matrix2,sparse = T)
+dtrain2 <- xgb.DMatrix(data = train_sparse2,label=log(outcomes2))
+dtest2 <- xgb.DMatrix(data=test_sparse2)
+
+# Params for xgboost
+param <- list(objective="reg:linear",
+              eval_metric = "rmse",
+              eta = .05,
+              gamma = 1,
+              max_depth = 4,
+              min_child_weight = 1,
+              subsample = .7,
+              colsample_bytree = .7
+)
+
+#Cross validation - determine CV scores & optimal amount of rounds
+cat("XGB cross validation")
+xgb_cv <- xgb.cv(data = dtrain,
+                nfold = 5,
+                params = param,
+                nrounds = 150000,
+                maximize = FALSE,
+                prediction = TRUE,
+                print.every.n = 5,
+                early.stop.round = 100
+);gc()
+rounds <- xgb_cv$best_iteration
+
+
+#Cross validation - determine CV scores & optimal amount of rounds
+cat("XGB cross validation")
+xgb_cv <- xgb.cv(data = dtrain1,
+                nfold = 5,
+                params = param,
+                nrounds = 150000,
+                maximize = FALSE,
+                prediction = TRUE,
+                print.every.n = 5,
+                early.stop.round = 100
+);gc()
+rounds1 <- xgb_cv$best_iteration
+
+#Cross validation - determine CV scores & optimal amount of rounds
+cat("XGB cross validation")
+xgb_cv <- xgb.cv(data = dtrain2,
+                nfold = 5,
+                params = param,
+                nrounds = 150000,
+                maximize = FALSE,
+                prediction = TRUE,
+                print.every.n = 5,
+                early.stop.round = 100
+);gc()
+rounds2 <- xgb_cv$best_iteration
+
+# Train model
+cat("XGB training")
+xgb_model0 <- xgb.train(data = dtrain0,
+                       params = param,
+                       watchlist = list(train = dtrain),
+                       nrounds = rounds,
+                       verbose = 1,
+                       print.every.n = 5
+);gc()
+
+# Train model
+cat("XGB training")
+xgb_model1 <- xgb.train(data = dtrain1,
+                       params = param,
+                       watchlist = list(train = dtrain1),
+                       nrounds = rounds1,
+                       verbose = 1,
+                       print.every.n = 5
+);gc()
+
+# Train model
+cat("XGB training")
+xgb_model2 <- xgb.train(data = dtrain2,
+                       params = param,
+                       watchlist = list(train = dtrain2),
+                       nrounds = rounds2,
+                       verbose = 1,
+                       print.every.n = 5
+);gc()
+
+# Feature importance
+cat("Plotting feature importance")
+names <- dimnames(train_sparse)[[2]]
+importance_matrix <- xgb.importance(names,model=xgb_model)
+xgb.plot.importance(importance_matrix[1:50,])
+
+# Predict and output csv
+cat("Predictions")
+preds0 <- predict(xgb_model0,dtest0)
+preds0 <- exp(preds0)
+
+preds1 <- predict(xgb_model1,dtest1)
+preds1 <- exp(preds1)
+
+preds2 <- predict(xgb_model2,dtest2)
+preds2 <- exp(preds2)
+
+preds <- data.frame(id=test$id,pred=NA)
+
+
+preds$pred[which(is.na(test$product_type))] <- preds0[which(is.na(test$product_type))]
+
+preds$pred[which(test$id %in% test1$id)] <- preds1
+preds$pred[which(test$id %in% test2$id)] <- preds2
+
+
+write.table(data.frame(id=test_ids, price_doc=preds$pred), "submission.csv", sep=",", dec=".", quote=FALSE, row.names=FALSE)
+
+```
+
+
+
+
+## Problem 1: wrong scale nivau
+
+## Area measures 0 and 1 seem to not make sense
+
+
+## Problem 1: Outliers for Area (full and live)
+## Problem 2: build year has strange values
+## Problem 3: sometimes max_floor > floor
+
+## some values in kitch_sq are years possibly build_year
+
