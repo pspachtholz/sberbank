@@ -13,9 +13,7 @@ different kernels and discussion threads.**Therefore, my plan here is to provide
 
 ```
 Recent updates:
-- added for each sub area distance to kremlin
-- added longitude and latitude of sub_area
-- added proportions of houses with certain build material characteristics
+- grouped appartments in the same building complex together
 ```
 
 Feel free to add new ideas in the comments and
@@ -23,23 +21,20 @@ I'll add them to the list and please don't forget to **upvote** if you find it u
 
 Having said all that, let's jump right into it:
 
-```{r setup, include=FALSE}
-  knitr::opts_chunk$set(echo = TRUE)
-```
-
 ### Initialization
-```{r warning=FALSE, eval = FALSE}
-  library(readr)
+```{r message=FALSE, warning=FALSE}
+  library(data.table)
   library(dplyr)
   library(lubridate)
   library(stringr)
 
-  train <- read_csv('./input/train.csv')
+  train <- fread('../input/train.csv')
+  
 ```
 
 ##### Minimal data cleaning
 
-```{r eval=FALSE}
+```{r }
 train <- train %>% 
   mutate(max_floor = as.numeric(max_floor), kitch_sq=as.numeric(kitch_sq), num_room=as.numeric(num_room), build_year=as.numeric(build_year), sub_area=as.factor(sub_area))
 train <- train %>% 
@@ -52,7 +47,7 @@ train <- train %>%
 
 #### Split the timestamp feature
 
-```{r eval=FALSE}
+```{r }
   # year
   train <- train %>% 
     mutate(year = year(timestamp))
@@ -65,7 +60,7 @@ train <- train %>%
 
 #### Get month, week, weekday
 
-```{r eval=FALSE}
+```{r }
   # month of year
   train <- train %>% 
     mutate(month_of_year = month(train$timestamp))
@@ -88,9 +83,7 @@ train <- train %>%
 ### House characteristics
 
 
-
-
-```{r eval=FALSE}
+```{r }
   # number of floors to the top of house
   train <- train %>% 
     mutate(floor_from_top = max_floor - floor)
@@ -121,8 +114,25 @@ train <- train %>%
   
 ```
 
+### Grouping appartments together
+Some appartments seem to be in the same building. They have the same sub_area and distance to metro.
+```{r}
+  # assign a common name to them
+  train <- train %>% 
+    mutate(appartment_name = factor(str_c(sub_area,format(metro_km_avto,digits=3))))
+  
+  # get the number of appartments in group
+  train <- train %>% 
+    group_by(appartment_name) %>% 
+    tally() %>% 
+    right_join(train,by="appartment_name")
+
+```
+
+
+
 ### General sale characteristics
-```{r eval=F}
+```{r }
   # number of sales per year_month
   train <- train %>% 
     group_by(year_month) %>% 
@@ -135,10 +145,10 @@ train <- train %>%
 #### Location data
 For the location data you have to read in an [external data file](https://www.kaggle.com/jtremoureux/administrative-divisions-of-moscow). You can find a tutorial [here](https://www.kaggle.com/product-feedback/32423#post179905).
 
-```{r eval=FALSE}
+```{r warning=FALSE, message=FALSE, eval=FALSE}
   # Longitude and Latitude
   library(rgdal) # read the shapefile with readOGR()
-  shp <- readOGR(dsn = "./input/administrative-divisions-of-moscow", layer = "moscow_adm")
+  shp <- readOGR(dsn = "../input/administrative-divisions-of-moscow", layer = "moscow_adm")
   centroids <- coordinates(shp)  
   sub_area <- shp$RAION
   okrug <- shp$OKRUGS
@@ -154,6 +164,7 @@ For the location data you have to read in an [external data file](https://www.ka
     top_n(n = 1, wt=id) %>% 
     ungroup %>% 
     mutate(distance_from_kremlin = distm(.[c("longitude","latitude")], kremlin, fun=distHaversine)) %>% 
+    select(sub_area, distance_from_kremlin) %>% 
     right_join(train, by="sub_area")
 
 ```
@@ -182,7 +193,7 @@ For the location data you have to read in an [external data file](https://www.ka
 ```
 
 #### Population characteristics
-```{r eval=F}
+```{r }
   # population density per raion (i.e. Number of people per square meter)
   train <- train %>% 
     mutate(pop_density_raion = raion_popul/area_m)
@@ -198,7 +209,7 @@ For the location data you have to read in an [external data file](https://www.ka
 ```
 
 #### Building information
-```{r eval=F}
+```{r }
   # average building height per raion
   train <- train %>% 
     group_by(sub_area) %>% 
@@ -211,7 +222,7 @@ For the location data you have to read in an [external data file](https://www.ka
 ```
 
 #### Educational characteristics
-```{r eval=F}
+```{r }
   # ratio of number of pupils and preschool seats
   train <- train %>% 
     mutate(ratio_preschool = children_preschool / preschool_quota)
@@ -224,7 +235,7 @@ For the location data you have to read in an [external data file](https://www.ka
 
 
 ### dataset related features
-```{r eval =F}
+```{r}
   # number of missing values per row (this is going to take a while)
   train <- train %>% 
     mutate(count_na_perrow = apply(., 1, function(x) sum(is.na(x))))
@@ -233,7 +244,7 @@ For the location data you have to read in an [external data file](https://www.ka
 
 ### Current To-do List
 
-1. ...
+1. Sales (by year or month) for grouped appartments.
 
 
 #### Disclaimer

@@ -1,0 +1,372 @@
+---
+title: "CV Simulations"
+output:
+  html_document: default
+---
+
+```{r warning=FALSE, message=FALSE}
+library(ggplot2)
+library(xgboost)
+library(caret)
+library(dplyr)
+
+x <- 10+rnorm(10000)
+y <- x + rnorm(10000)
+
+df <- data.frame(x,y)
+
+ggplot(df,aes(x=x,y=y))+geom_point()+theme_bw()
+
+train <- df %>% filter(x<10.5)
+test <- df %>% filter(x>=10.5)
+
+
+```
+
+```{r}
+
+train_x <- as.matrix(select(train, x))
+train_y <- select(train, y)[[1]]
+test_x <- as.matrix(select(test, x))
+test_y <- select(test, y)[[1]]
+
+dtrain <- xgb.DMatrix(data = train_x,label=train_y)
+dtest <- xgb.DMatrix(data = test_x)
+
+```
+
+# Tree vs Linear
+## Tree
+
+```{r include=FALSE}
+# Params for xgboost
+param <- list(objective="reg:linear",
+              booster="gbtree",
+              eval_metric = "rmse",
+              eta = .5,
+              gamma = 1,
+              max_depth = 1,
+              min_child_weight = 1,
+              subsample = 1,
+              colsample_bytree = 1
+)
+
+
+#Cross validation - determine CV scores & optimal amount of rounds
+xgb_cv <- xgb.cv(data = dtrain,
+                nfold = 5,
+                params = param,
+                nrounds = 150000,
+                maximize = FALSE,
+                prediction = TRUE,
+                early_stopping_round = 100,
+                verbose=0
+)
+
+rounds <- xgb_cv$best_iteration
+
+# Train model
+cat("XGB training")
+xgb_model <- xgb.train(data = dtrain,
+                       params = param,
+                       watchlist = list(train = dtrain),
+                       nrounds = rounds,
+                       verbose = 0
+)
+
+preds_train <- predict(xgb_model,dtrain)
+preds_test <- predict(xgb_model,dtest)
+
+plot_train <- data.frame(x=train_x,y=train_y,pred=preds_train,type=0)
+plot_test <- data.frame(x=test_x,y=test_y,pred=preds_test,type=1)
+
+plotdf <- bind_rows(plot_train,plot_test)
+plotdf$type = factor(plotdf$type,labels = c("train","test"))
+
+```
+
+```{r echo=FALSE}
+plotdf %>% ggplot(aes(x=x,color=type))+geom_point(aes(y=y), alpha=0.05, size=1)+theme_bw()+coord_cartesian(ylim=c(5,13.5))+geom_point(aes(y=pred), size=2)
+```
+ 
+```{r echo=FALSE}
+cat('Train RMSE: ', RMSE(plot_train$y,plot_train$pred), '\nCV RMSE: ', xgb_cv$evaluation_log$test_rmse_mean[rounds], '\nTest RMSE: ', RMSE(plot_test$y,plot_test$pred))
+```
+## Last year price
+
+```{r}
+library(RcppRoll)
+
+n_values <- 250
+alldata <- bind_rows(data.frame(train,type=0),data.frame(test,type=1))
+tmp <- alldata %>% arrange(x) %>% mutate(roll1 = lag(roll_mean(y,n_values,fill=NA,align="right")), roll2=lag(roll_mean(y,n_values,fill=NA,align="right"),n_values), rolldiff=roll1-roll2)
+
+train_x <- as.matrix(select(filter(tmp,type==0), x, rolldiff))
+train_y <- select(filter(tmp,type==0), y)[[1]]
+test_x <- as.matrix(select(filter(tmp,type==1), x, rolldiff))
+
+dtrain <- xgb.DMatrix(data = train_x,label=train_y)
+dtest <- xgb.DMatrix(data=test_x)
+```
+
+
+```{r}
+
+# Params for xgboost
+param <- list(objective="reg:linear",
+              booster="gbtree",
+              eval_metric = "rmse",
+              eta = .25,
+              gamma = 1,
+              max_depth = 4,
+              min_child_weight = 1,
+              subsample = 0.7,
+              colsample_bytree = 1
+)
+
+#Cross validation - determine CV scores & optimal amount of rounds
+xgb_cv <- xgb.cv(data = dtrain,
+                nfold = 5,
+                params = param,
+                nrounds = 150000,
+                maximize = FALSE,
+                prediction = TRUE,
+                early_stopping_round = 100,
+                verbose=0
+)
+
+rounds <- xgb_cv$best_iteration
+
+# Train model
+xgb_model <- xgb.train(data = dtrain,
+                       params = param,
+                       watchlist = list(train = dtrain),
+                       nrounds = rounds,
+                       verbose = 0
+)
+
+preds_train <- predict(xgb_model,dtrain)
+preds_test <- predict(xgb_model,dtest)
+
+plot_train <- data.frame(train_x,y=train_y,pred=preds_train,type=0)
+plot_test <- data.frame(test_x,y=test_y,pred=preds_test,type=1)
+
+plotdf <- bind_rows(plot_train,plot_test)
+plotdf$type = factor(plotdf$type,labels = c("train","test"))
+
+```
+
+```{r echo=FALSE}
+plotdf %>% ggplot(aes(x=x,color=type))+geom_point(aes(y=y), alpha=0.05, size=1)+theme_bw()+geom_point(aes(y=pred), size=2)
+```
+```{r echo=FALSE}
+cat('Train RMSE: ', RMSE(plot_train$y,plot_train$pred), '\nCV RMSE: ', xgb_cv$evaluation_log$test_rmse_mean[rounds], '\nTest RMSE: ', RMSE(plot_test$y,plot_test$pred))
+```
+
+
+
+
+
+## Linear
+
+```{r}
+train_x <- as.matrix(select(train, x))
+train_y <- select(train, y)[[1]]
+test_x <- as.matrix(select(test, x))
+test_y <- select(test, y)[[1]]
+
+dtrain <- xgb.DMatrix(data = train_x,label=train_y)
+dtest <- xgb.DMatrix(data = test_x)
+```
+
+
+```{r include=FALSE}
+# Params for xgboost
+param <- list(objective="reg:linear",
+              booster="gblinear",
+              eval_metric = "rmse",
+              eta = .5,
+              gamma = 1,
+              max_depth = 1,
+              min_child_weight = 1,
+              subsample = 1,
+              colsample_bytree = 1
+)
+
+
+#Cross validation - determine CV scores & optimal amount of rounds
+xgb_cv <- xgb.cv(data = dtrain,
+                nfold = 5,
+                params = param,
+                nrounds = 150000,
+                maximize = FALSE,
+                prediction = TRUE,
+                early_stopping_round = 100,
+                verbose=0
+)
+
+rounds <- xgb_cv$best_iteration
+
+# Train model
+cat("XGB training")
+xgb_model <- xgb.train(data = dtrain,
+                       params = param,
+                       watchlist = list(train = dtrain),
+                       nrounds = rounds,
+                       verbose = 0
+)
+
+preds_train <- predict(xgb_model,dtrain)
+preds_test <- predict(xgb_model,dtest)
+
+plot_train <- data.frame(x=train_x,y=train_y,pred=preds_train,type=0)
+plot_test <- data.frame(x=test_x,y=test_y,pred=preds_test,type=1)
+
+plotdf <- bind_rows(plot_train,plot_test)
+plotdf$type = factor(plotdf$type,labels = c("train","test"))
+
+```
+
+```{r echo=FALSE}
+plotdf %>% ggplot(aes(x=x,color=type))+geom_point(aes(y=y), alpha=0.05, size=1)+theme_bw()+coord_cartesian(ylim=c(5,13.5))+geom_point(aes(y=pred), size=2)
+```
+ 
+```{r echo=FALSE}
+cat('Train RMSE: ', RMSE(plot_train$y,plot_train$pred), '\nCV RMSE: ', xgb_cv$evaluation_log$test_rmse_mean[rounds], '\nTest RMSE: ', RMSE(plot_test$y,plot_test$pred))
+```
+
+
+# Random Values
+
+```{r}
+inds <- sample(1:nrow(train_x),nrow(train_x)*0.1)
+train_y[inds] <- 6
+```
+
+```{r include=FALSE}
+
+dtrain <- xgb.DMatrix(data = train_x,label=train_y)
+
+# Params for xgboost
+param <- list(objective="reg:linear",
+              booster="gblinear",
+              eval_metric = "rmse",
+              eta = .5,
+              gamma = 1,
+              max_depth = 1,
+              min_child_weight = 1,
+              subsample = 1,
+              colsample_bytree = 1
+)
+
+
+#Cross validation - determine CV scores & optimal amount of rounds
+xgb_cv <- xgb.cv(data = dtrain,
+                nfold = 5,
+                params = param,
+                nrounds = 150000,
+                maximize = FALSE,
+                prediction = TRUE,
+                early_stopping_round = 100,
+                verbose=0
+)
+
+rounds <- xgb_cv$best_iteration
+
+# Train model
+cat("XGB training")
+xgb_model <- xgb.train(data = dtrain,
+                       params = param,
+                       watchlist = list(train = dtrain),
+                       nrounds = rounds,
+                       verbose = 0
+)
+
+preds_train <- predict(xgb_model,dtrain)
+preds_test <- predict(xgb_model,dtest)
+
+plot_train <- data.frame(x=train_x,y=train_y,pred=preds_train,type=0)
+plot_test <- data.frame(x=test_x,y=test_y,pred=preds_test,type=1)
+
+plotdf <- bind_rows(plot_train,plot_test)
+plotdf$type = factor(plotdf$type,labels = c("train","test"))
+
+```
+
+```{r echo=FALSE}
+
+plotdf %>% ggplot(aes(x=y))+geom_histogram(aes(y=..density..))+geom_line(stat="density",aes(y=..density..),color="red",size=2)
+
+plotdf %>% ggplot(aes(x=x,color=type))+geom_point(aes(y=y), alpha=0.05, size=1)+theme_bw()+coord_cartesian(ylim=c(5,13.5))+geom_point(aes(y=pred), size=2)
+```
+
+```{r echo=FALSE}
+cat('Train RMSE: ', RMSE(plot_train$y,plot_train$pred), '\nCV RMSE: ', xgb_cv$evaluation_log$test_rmse_mean[rounds], '\nTest RMSE: ', RMSE(plot_test$y,plot_test$pred))
+```
+
+
+# Remove Random Values from Train
+
+```{r}
+train_x <- matrix(train_x[-inds,])
+train_y <- train_y[-inds]
+
+```
+
+```{r include=FALSE}
+
+dtrain <- xgb.DMatrix(data = train_x,label=train_y)
+
+# Params for xgboost
+param <- list(objective="reg:linear",
+              booster="gblinear",
+              eval_metric = "rmse",
+              eta = .5,
+              gamma = 1,
+              max_depth = 1,
+              min_child_weight = 1,
+              subsample = 1,
+              colsample_bytree = 1
+)
+
+
+#Cross validation - determine CV scores & optimal amount of rounds
+xgb_cv <- xgb.cv(data = dtrain,
+                nfold = 5,
+                params = param,
+                nrounds = 150000,
+                maximize = FALSE,
+                prediction = TRUE,
+                early_stopping_round = 100,
+                verbose=0
+)
+
+rounds <- xgb_cv$best_iteration
+
+# Train model
+cat("XGB training")
+xgb_model <- xgb.train(data = dtrain,
+                       params = param,
+                       watchlist = list(train = dtrain),
+                       nrounds = rounds,
+                       verbose = 0
+)
+
+preds_train <- predict(xgb_model,dtrain)
+preds_test <- predict(xgb_model,dtest)
+
+plot_train <- data.frame(x=train_x,y=train_y,pred=preds_train,type=0)
+plot_test <- data.frame(x=test_x,y=test_y,pred=preds_test,type=1)
+
+plotdf <- bind_rows(plot_train,plot_test)
+plotdf$type = factor(plotdf$type,labels = c("train","test"))
+
+```
+
+```{r echo=FALSE}
+plotdf %>% ggplot(aes(x=x,color=type))+geom_point(aes(y=y), alpha=0.2, size=1)+theme_bw()+coord_cartesian(ylim=c(5,13.5))+geom_point(aes(y=pred), size=2)
+```
+
+```{r echo=FALSE}
+cat('Train RMSE: ', RMSE(plot_train$y,plot_train$pred), '\nCV RMSE: ', xgb_cv$evaluation_log$test_rmse_mean[rounds], '\nTest RMSE: ', RMSE(plot_test$y,plot_test$pred))
+```
