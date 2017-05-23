@@ -27,12 +27,15 @@ Having said all that, let's jump right into it:
   library(dplyr)
   library(lubridate)
   library(stringr)
+  library(caret)
+  library(Matrix)
+  library(xgboost)
 
   train <- fread('../input/train.csv')
   
 ```
 
-##### Minimal data cleaning
+##### Some data cleaning
 
 ```{r }
 train <- train %>% 
@@ -40,8 +43,29 @@ train <- train %>%
 train <- train %>% 
   filter(build_year < 2020)
 
-```
+train <- train %>% mutate(strange_full_sq = ifelse(full_sq <= 1, full_sq+1,0), full_sq = ifelse(full_sq > 800 | full_sq <= 1, NA, full_sq))
 
+train <- train %>% mutate(strange_life_sq = ifelse(life_sq <= 1, life_sq+1,0), strange_life_sq= ifelse(is.na(strange_life_sq),0,strange_life_sq), life_sq = ifelse(life_sq > 400 | life_sq <= 1, NA, life_sq))
+
+train <- train %>% mutate(kitch_sq = as.numeric(kitch_sq),strange_kitch_sq = ifelse(kitch_sq <= 1, kitch_sq+1,0),kitch_sq = ifelse(kitch_sq > 200 | kitch_sq <= 1, NA, kitch_sq))
+
+train <- train %>% mutate(num_room = as.numeric(num_room))
+
+train <- train %>% mutate(build_year = as.numeric(build_year), strange_build_year = ifelse(build_year <= 1, build_year+1,0), build_year = ifelse(build_year > 2018 | build_year < 1860, NA, build_year))
+
+train <- train %>% mutate(floor = ifelse(floor > 45, NA, floor))
+
+train <- train %>% mutate(max_floor = as.numeric(max_floor), strange_max_floor = ifelse(max_floor <= 1, max_floor+1,0), max_floor = ifelse(max_floor > 60 | max_floor <=1, NA, max_floor))
+
+train <- train %>% mutate(state = as.numeric(state), state = ifelse(state > 4, NA, state))
+
+train <- train %>% mutate(material = as.factor(material), material = ifelse(material == 3, NA, material))
+
+train <- train %>% mutate(product_type = factor(product_type))
+
+train <- train %>% mutate(sub_area = factor(sub_area))
+
+```
 
 ### Time features
 
@@ -240,6 +264,62 @@ For the location data you have to read in an [external data file](https://www.ka
   train <- train %>% 
     mutate(count_na_perrow = apply(., 1, function(x) sum(is.na(x))))
 ```
+
+
+### Feature Importance
+
+# Basic features
+```{r}
+
+outcome <- "price_doc"
+outcomes <- train[[outcome]]
+train_ids <- train$id
+
+basic_features <- c(outcome, "full_sq", "life_sq", "kitch_sq", "num_room", "floor", "max_floor", "material", "build_year", "state", "product_type")
+
+```
+
+
+```{r}
+
+newfeatures <- c("age_at_sale", "")
+
+for (i in 1:10)
+predictors <- c(setdiff(basic_features,outcome),"age_at_sale")
+
+
+train_set <- select(train, one_of(predictors))
+
+dummy <- dummyVars(~.,train_set)
+train_matrix <- predict(dummy,train_set)
+
+train_sparse <- Matrix(train_matrix,sparse = T)
+dtrain <- xgb.DMatrix(data = train_sparse,label=log(outcomes))
+
+# Params for xgboost
+param <- list(objective="reg:linear",
+              eval_metric = "rmse",
+              eta = .5,
+              gamma = 1,
+              max_depth = 4,
+              min_child_weight = 1,
+              subsample = .5,
+              colsample_bytree = .7
+)
+
+# Train model
+xgb_model <- xgb.train(data = dtrain,
+                       params = param,
+                       watchlist = list(train = dtrain),
+                       nrounds = 1000,
+                       verbose = 0
+);gc()
+
+
+imp_matrix <- xgb.importance(colnames(train_sparse),xgb_model)
+xgb.plot.importance(imp_matrix)
+```
+
 
 
 ### Current To-do List

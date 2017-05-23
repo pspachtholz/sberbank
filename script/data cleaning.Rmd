@@ -70,6 +70,7 @@ table(train$kitch_sq)
 
 train <- train %>% mutate(kitch_sq = as.numeric(kitch_sq),strange_kitch_sq = ifelse(kitch_sq <= 1, kitch_sq+1,0), strange_kitch_sq = ifelse(is.na(strange_kitch_sq),0, strange_kitch_sq),kitch_sq = ifelse(kitch_sq > 200 | kitch_sq <= 1, NA, kitch_sq))
 test <- test %>% mutate(kitch_sq = as.numeric(kitch_sq),strange_kitch_sq = ifelse(kitch_sq <= 1, kitch_sq+1,0), strange_kitch_sq = ifelse(is.na(strange_kitch_sq),0, strange_kitch_sq),kitch_sq = ifelse(kitch_sq > 200 | kitch_sq <= 1, NA, kitch_sq))
+
 ```
 
 ## Number of living rooms
@@ -99,6 +100,7 @@ strange_build_year = ifelse(is.na(strange_build_year),0, strange_build_year), bu
 table(train$build_year)
 table(test$build_year)
 ```
+
 ## floor
 ```{r}
 str(train$floor)
