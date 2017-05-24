@@ -28,7 +28,7 @@ knitr::opts_knit$set(root.dir = "~/Desktop/Machine Learning/Kaggle/Sberbank/sber
   
   full <- bind_rows(train,test)
   
-basic_features <- c("id", "timestamp", "price_doc", "full_sq", "life_sq", "kitch_sq", "num_room", "floor", "max_floor", "material", "build_year", "state", "product_type")
+basic_features <- c("id", "timestamp", "price_doc", "full_sq", "life_sq", "kitch_sq", "num_room", "floor", "max_floor", "material", "build_year", "state", "product_type", "sub_area")
 
   train <- train %>% select(one_of(basic_features))  
   test <- test %>% select(one_of(setdiff(basic_features,"price_doc")))
@@ -84,9 +84,6 @@ test <- test %>% mutate(strange_life_sq = ifelse(life_sq <= 1, life_sq+1,0), str
 
 ## Kitchen area 
 ```{r}
-# deal with outliers
-str(train$kitch_sq)
-table(train$kitch_sq)
 
 ## build years in kitch_sq
 train <- train %>% mutate(build_year = ifelse(kitch_sq>1900,kitch_sq,build_year))
@@ -96,7 +93,9 @@ test <- test %>% mutate(build_year = ifelse(kitch_sq>1900,kitch_sq,build_year))
 train <- train %>% mutate(kitch_sq = ifelse(kitch_sq >= full_sq, NA, kitch_sq))
 test <- test %>% mutate(kitch_sq = ifelse(kitch_sq >= full_sq, NA, kitch_sq))
 
-### to do: kitch_sq >= life_sq
+### kitch_sq >= life_sq
+train <- train %>% mutate(kitch_sq = ifelse(kitch_sq >= life_sq, NA, kitch_sq))
+test <- test %>% mutate(kitch_sq = ifelse(kitch_sq >= life_sq, NA, kitch_sq))
 
 train <- train %>% mutate(strange_kitch_sq = ifelse(kitch_sq <= 1, kitch_sq+1,0),kitch_sq = ifelse(kitch_sq <= 1, NA, kitch_sq))
 test <- test %>% mutate(strange_kitch_sq = ifelse(kitch_sq <= 1, kitch_sq+1,0),kitch_sq = ifelse(kitch_sq <= 1, NA, kitch_sq))
@@ -107,27 +106,24 @@ test <- test %>% mutate(strange_kitch_sq = ifelse(kitch_sq <= 1, kitch_sq+1,0),k
 
 ## Number of living rooms
 ```{r}
-str(train$num_room)
-table(train$num_room)
-table(test$num_room)
+train <- train %>% mutate(num_room = ifelse(num_room >= 10 | num_room <= 0, NA, num_room))
+test <- test %>% mutate(num_room = ifelse(num_room >= 10 | num_room <= 0, NA, num_room))
 
-train <- train %>% mutate(num_room = as.numeric(num_room))
-test <- test %>% mutate(num_room = as.numeric(num_room))
-#ok
 ```
 
 
 ## build year
 ```{r}
-str(train$build_year)
-train$build_year <- as.numeric(train$build_year)
 table(train$build_year)
 
-train <- train %>% mutate(build_year = as.numeric(build_year), strange_build_year = ifelse(build_year <= 1, build_year+1,0),
-strange_build_year = ifelse(is.na(strange_build_year),0, strange_build_year), build_year = ifelse(build_year > 2018 | build_year < 1860, NA, build_year))
+train <- train %>% mutate(build_year = ifelse(build_year > 1000000, mean(as.numeric(c(str_sub(build_year,1,4),str_sub(build_year,5,8)))), build_year))
 
-test <- test %>% mutate(build_year = as.numeric(build_year), strange_build_year = ifelse(build_year <= 1, build_year+1,0),
-strange_build_year = ifelse(is.na(strange_build_year),0, strange_build_year), build_year = ifelse(build_year > 2018 | build_year < 1860, NA, build_year))
+train <- train %>% mutate(build_year = ifelse(build_year > 2900, as.numeric(str_c("1",str_sub(build_year,2,4))), build_year))
+
+train <- train %>% mutate(strange_build_year = ifelse(build_year <= 1, build_year+1,0), build_year = ifelse(build_year < 1500, NA, build_year))
+
+test <- test %>% mutate(strange_build_year = ifelse(build_year <= 1, build_year+1,0), build_year = ifelse(build_year < 1500, NA, build_year))
+
 
 table(train$build_year)
 table(test$build_year)
@@ -135,41 +131,37 @@ table(test$build_year)
 
 ## floor
 ```{r}
-str(train$floor)
 table(train$floor)
-str(test$floor)
 table(test$floor)
 
-train <- train %>% mutate(floor = ifelse(floor > 45, NA, floor))
-test <- test %>% mutate(floor = ifelse(floor > 45, NA, floor))
+train <- train %>% mutate(floor = ifelse(floor > 45, round(floor/10), floor))
+test <- test %>% mutate(floor = ifelse(floor > 45, round(floor/10), floor))
 ```
 
 ## max floor
 ```{r}
-str(train$max_floor)
-train <- train %>% mutate(max_floor = as.numeric(max_floor))
-table(train$max_floor)
-str(test$floor)
-table(test$floor)
 
-train <- train %>% mutate(max_floor = as.numeric(max_floor), strange_max_floor = ifelse(max_floor <= 1, max_floor+1,0), strange_max_floor = ifelse(is.na(strange_max_floor),0,strange_max_floor),max_floor = ifelse(max_floor > 60 | max_floor <=1, NA, max_floor))
+train <- train %>% mutate(max_floor = ifelse(max_floor>100, as.numeric(str_sub(max_floor,2,3)),max_floor))
 
-test <- test %>% mutate(max_floor = as.numeric(max_floor), strange_max_floor = ifelse(max_floor <= 1, max_floor+1,0), strange_max_floor = ifelse(is.na(strange_max_floor),0,strange_max_floor),max_floor = ifelse(max_floor > 60 | max_floor <=1, NA, max_floor))
+train <- train %>% mutate(strange_max_floor = ifelse(max_floor <= 1, max_floor+1,0), max_floor = ifelse(max_floor > 60 | max_floor <=0, NA, max_floor))
+
+test <- test %>% mutate(strange_max_floor = ifelse(max_floor <= 1, max_floor+1,0), max_floor = ifelse(max_floor > 60 | max_floor <=0, NA, max_floor))
+
 ```
 
 
 ## state
 ```{r}
-str(train$state)
-train <- train %>% mutate(state = as.numeric(state))
-table(train$state)
-str(test$state)
-table(test$state)
+train <- train %>% mutate(state= ifelse(state>10, round(state/10),state))
 
 train <- train %>% mutate(state = as.numeric(state), state = ifelse(state > 4, NA, state))
 test <- test %>% mutate(state = as.numeric(state), state = ifelse(state > 4, NA, state))
 
 ```
+
+
+### till here
+
 
 ## material
 ```{r}
@@ -209,6 +201,10 @@ test <- test %>% mutate(sub_area = factor(sub_area))
 train <- train %>% mutate(life_sq=ifelse(is.na(life_sq) & !is.na(full_sq), full_sq*0.64, life_sq))
 test <- test %>% mutate(life_sq=ifelse(is.na(life_sq) & !is.na(full_sq), full_sq*0.64, life_sq))
 ```
+
+### replace num_floor NA
+
+### take the appartment_id to fill in nan
 
 
 # Feature engineering
