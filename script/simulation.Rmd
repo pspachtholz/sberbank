@@ -414,7 +414,7 @@ dtest <- xgb.DMatrix(data = test_x)
 
 ```
 
-```{r include=FALSE}
+```{r importance-analysis, include=FALSE}
 
 dtrain <- xgb.DMatrix(data = train_x,label=train_y)
 

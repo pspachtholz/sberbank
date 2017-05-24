@@ -8,7 +8,9 @@ knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "~/Desktop/Machine Learning/Kaggle/Sberbank/sberbank")
 
 ```
+
 ```{r}
+  library(data.table)
   library(readr)
   library(caret)
   library(dplyr)
@@ -16,51 +18,69 @@ knitr::opts_knit$set(root.dir = "~/Desktop/Machine Learning/Kaggle/Sberbank/sber
   library(lubridate)
   library(Matrix)
 
-  train <- read_csv('./input/train.csv')
-  test <- read_csv('./input/test.csv')
+  train <- read_csv('../input/train.csv')
+  test <- read_csv('../input/test.csv')
+  
+  train$type = "train"
+  test$type = "test"
+  
+  train <- train %>% mutate(max_floor = as.numeric(max_floor), kitch_sq=as.numeric(kitch_sq), num_room=as.numeric(num_room), material = as.numeric(material), build_year=as.numeric(build_year), state = as.numeric(state))
+  
+  full <- bind_rows(train,test)
+  
+basic_features <- c("id", "timestamp", "price_doc", "full_sq", "life_sq", "kitch_sq", "num_room", "floor", "max_floor", "material", "build_year", "state", "product_type")
+
+  train <- train %>% select(one_of(basic_features))  
+  test <- test %>% select(one_of(setdiff(basic_features,"price_doc")))
 ```
 
-
-# Basic features
-```{r}
-outcome <- "price_doc"
-outcomes <- train[[outcome]]
-train_ids <- train$id
-test_ids <- test$id
-basic_features <- c(outcome,"timestamp", "full_sq", "life_sq", "kitch_sq", "num_room", "floor", "max_floor", "material", "build_year", "state", "product_type", "sub_area")
-predictors <- setdiff(basic_features,outcome)
-
-```
-
-
-```{r}
-train <- select(train, one_of(basic_features))
-test <- select(test, one_of(c(predictors,"id")))
-```
 
 ## Price Doc
 ```{r}
+train %>% count(price_doc) %>% filter(price_doc <= 3000000) %>% arrange(desc(n))
+
 #potentially remove these rows from train set
 train <- train %>% mutate(strange_price_doc = ifelse(price_doc %in% c(990000,999000,1000000,1100000,2000000,3000000), 1,0))
+
+train <- train %>% filter(price_doc <= 1e08)
 ```
 
 ## Full square
 ```{r}
-# deal with outliers
-str(train$full_sq)
-table(train$full_sq)
-train <- train %>% mutate(strange_full_sq = ifelse(full_sq <= 1, full_sq+1,0), full_sq = ifelse(full_sq > 800 | full_sq <= 1, NA, full_sq))
-test <- test %>% mutate(strange_full_sq = ifelse(full_sq <= 1, full_sq+1,0), full_sq = ifelse(full_sq > 800 | full_sq <= 1, NA, full_sq))
+
+train <- train %>% mutate(full_sq = ifelse(full_sq > 1000, full_sq/100, full_sq))
+train <- train %>% mutate(full_sq = ifelse(full_sq > 100 & product_type=="OwnerOccupier" & num_room <= 2, full_sq/10, full_sq))
+train <- train %>% mutate(full_sq = ifelse(full_sq > 300 & product_type=="Investment", full_sq/10, full_sq))
+
+test <- test %>% mutate(full_sq = ifelse(full_sq > 300 & product_type=="OwnerOccupier" & num_room <= 2, full_sq/10, full_sq))
+
+train <- train %>% mutate(strange_full_sq = ifelse(full_sq <= 9, full_sq+1,0), full_sq = ifelse(full_sq <= 9, NA, full_sq))
+
+test <- test %>% mutate(strange_full_sq = ifelse(full_sq <= 9, full_sq+1,0), full_sq = ifelse(full_sq <= 9, NA, full_sq))
 ```
 
 ## Living area 
 ```{r}
-# deal with outliers
-str(train$life_sq)
-table(train$life_sq)
-train <- train %>% mutate(strange_life_sq = ifelse(life_sq <= 1, life_sq+1,0), strange_life_sq= ifelse(is.na(strange_life_sq),0,strange_life_sq), life_sq = ifelse(life_sq > 400 | life_sq <= 1, NA, life_sq))
-test <- test %>% mutate(strange_life_sq = ifelse(life_sq <= 1, life_sq+1,0), strange_life_sq= ifelse(is.na(strange_life_sq),0,strange_life_sq), life_sq = ifelse(life_sq > 400 | life_sq <= 1, NA, life_sq))
+
+train <- train %>% mutate(life_sq = ifelse(life_sq > 1000, life_sq/100, life_sq))
+train <- train %>% mutate(life_sq = ifelse(life_sq/10==full_sq, life_sq/10, life_sq))
+train <- train %>% mutate(life_sq = ifelse((full_sq >0 & life_sq/full_sq > 4), life_sq/10, life_sq))
+
+test <- test %>% mutate(life_sq = ifelse(life_sq/10==full_sq, life_sq/10, life_sq))
+test <- test %>% mutate(life_sq = ifelse((full_sq >0 & life_sq/full_sq > 4), life_sq/10, life_sq))
+
+### swapped vlaues between life and full_sq
+train[train$life_sq>train$full_sq & !(is.na(train$life_sq) | is.na(train$full_sq)),c("full_sq","life_sq")]<- train[train$life_sq>train$full_sq & !(is.na(train$life_sq) | is.na(train$full_sq)),c("life_sq","full_sq")]
+
+test[test$life_sq>test$full_sq & !(is.na(test$life_sq) | is.na(test$full_sq)),c("full_sq","life_sq")]<- test[test$life_sq>test$full_sq & !(is.na(test$life_sq) | is.na(test$full_sq)),c("life_sq","full_sq")]
+
+train <- train %>% mutate(strange_life_sq = ifelse(life_sq < 7, life_sq+1,0), life_sq = ifelse(life_sq <= 1, NA, life_sq))
+
+test <- test %>% mutate(strange_life_sq = ifelse(life_sq <= 1, life_sq+1,0), strange_life_sq= ifelse(is.na(strange_life_sq),0,strange_life_sq), life_sq = ifelse(life_sq <= 1, NA, life_sq))
+
 ```
+
+
 
 ## Kitchen area 
 ```{r}
@@ -68,10 +88,22 @@ test <- test %>% mutate(strange_life_sq = ifelse(life_sq <= 1, life_sq+1,0), str
 str(train$kitch_sq)
 table(train$kitch_sq)
 
-train <- train %>% mutate(kitch_sq = as.numeric(kitch_sq),strange_kitch_sq = ifelse(kitch_sq <= 1, kitch_sq+1,0), strange_kitch_sq = ifelse(is.na(strange_kitch_sq),0, strange_kitch_sq),kitch_sq = ifelse(kitch_sq > 200 | kitch_sq <= 1, NA, kitch_sq))
-test <- test %>% mutate(kitch_sq = as.numeric(kitch_sq),strange_kitch_sq = ifelse(kitch_sq <= 1, kitch_sq+1,0), strange_kitch_sq = ifelse(is.na(strange_kitch_sq),0, strange_kitch_sq),kitch_sq = ifelse(kitch_sq > 200 | kitch_sq <= 1, NA, kitch_sq))
+## build years in kitch_sq
+train <- train %>% mutate(build_year = ifelse(kitch_sq>1900,kitch_sq,build_year))
+test <- test %>% mutate(build_year = ifelse(kitch_sq>1900,kitch_sq,build_year))
+
+## sometimes kitch_sq >= full_sq
+train <- train %>% mutate(kitch_sq = ifelse(kitch_sq >= full_sq, NA, kitch_sq))
+test <- test %>% mutate(kitch_sq = ifelse(kitch_sq >= full_sq, NA, kitch_sq))
+
+### to do: kitch_sq >= life_sq
+
+train <- train %>% mutate(strange_kitch_sq = ifelse(kitch_sq <= 1, kitch_sq+1,0),kitch_sq = ifelse(kitch_sq <= 1, NA, kitch_sq))
+test <- test %>% mutate(strange_kitch_sq = ifelse(kitch_sq <= 1, kitch_sq+1,0),kitch_sq = ifelse(kitch_sq <= 1, NA, kitch_sq))
 
 ```
+
+
 
 ## Number of living rooms
 ```{r}
@@ -122,7 +154,6 @@ table(test$floor)
 
 train <- train %>% mutate(max_floor = as.numeric(max_floor), strange_max_floor = ifelse(max_floor <= 1, max_floor+1,0), strange_max_floor = ifelse(is.na(strange_max_floor),0,strange_max_floor),max_floor = ifelse(max_floor > 60 | max_floor <=1, NA, max_floor))
 
-
 test <- test %>% mutate(max_floor = as.numeric(max_floor), strange_max_floor = ifelse(max_floor <= 1, max_floor+1,0), strange_max_floor = ifelse(is.na(strange_max_floor),0,strange_max_floor),max_floor = ifelse(max_floor > 60 | max_floor <=1, NA, max_floor))
 ```
 
@@ -169,8 +200,16 @@ table(test$product_type)
 ```{r}
 train <- train %>% mutate(sub_area = factor(sub_area))
 test <- test %>% mutate(sub_area = factor(sub_area))
-
 ```
+
+
+### Deal with NaNs
+#### replace missing life_sq according to full_sq square mean ratio
+```{r}
+train <- train %>% mutate(life_sq=ifelse(is.na(life_sq) & !is.na(full_sq), full_sq*0.64, life_sq))
+test <- test %>% mutate(life_sq=ifelse(is.na(life_sq) & !is.na(full_sq), full_sq*0.64, life_sq))
+```
+
 
 # Feature engineering
 ```{r}
@@ -270,26 +309,6 @@ test_df["ratio_preschool"] = test_df["children_preschool"] / test_df["preschool_
 
 train_df["ratio_school"] = train_df["children_school"] / train_df["school_quota"].astype("float")
 test_df["ratio_school"] = test_df["children_school"] / test_df["school_quota"].astype("float")
-
-
-####
-population_cols = ['full_all', 'young_all', 'work_all', 'ekder_all', '0_6_all', '7_14_all',
-                   '0_17_all',  '16_29_all',  '0_13_all']
-for col in population_cols[1:]:
-    col_name = col + "_percent"
-    merged_encoded[col_name] = merged_encoded[col] / merged_encoded["full_all"]
-
-####
-for col in building_type_cols[1:]:
-    col_name = col + "_percent"
-    merged_encoded[col_name] = merged_encoded[col] / merged_encoded["raion_build_count_with_material_info"]
-    
-building_year_cols = ['raion_build_count_with_builddate_info', 'build_count_before_1920',
- 'build_count_1921-1945', 'build_count_1946-1970', 'build_count_1971-1995', 'build_count_after_1995']
-#####
-for col in building_year_cols[1:]:
-    col_name = col + "_percent"
-    merged_encoded[col_name] = merged_encoded[col] / merged_encoded["raion_build_count_with_builddate_info"]    
 
 ```
 

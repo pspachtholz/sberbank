@@ -1,5 +1,5 @@
 ---
-title: "A Collection of New Features"
+title: "An Updated Collection of New Features"
 author: "Philipp Spachtholz"
 output:
   html_document:
@@ -13,6 +13,8 @@ different kernels and discussion threads.**Therefore, my plan here is to provide
 
 ```
 Recent updates:
+- added Feature Importance Analysis
+- added more Data cleaning
 - grouped appartments in the same building complex together
 ```
 
@@ -30,8 +32,12 @@ Having said all that, let's jump right into it:
   library(caret)
   library(Matrix)
   library(xgboost)
+  library(geosphere)
+  library(rgdal)
 
   train <- fread('../input/train.csv')
+  test <- fread('../input/test.csv')
+  
   
 ```
 
@@ -39,15 +45,17 @@ Having said all that, let's jump right into it:
 
 ```{r }
 train <- train %>% 
-  mutate(max_floor = as.numeric(max_floor), kitch_sq=as.numeric(kitch_sq), num_room=as.numeric(num_room), build_year=as.numeric(build_year), sub_area=as.factor(sub_area))
+  mutate(max_floor = as.numeric(max_floor), kitch_sq=as.numeric(kitch_sq), num_room=as.numeric(num_room), build_year=as.numeric(build_year), sub_area=as.factor(sub_area)) 
+
 train <- train %>% 
-  filter(build_year < 2020)
+  filter(build_year < 2020 | is.na(build_year))
 
 train <- train %>% mutate(strange_full_sq = ifelse(full_sq <= 1, full_sq+1,0), full_sq = ifelse(full_sq > 800 | full_sq <= 1, NA, full_sq))
 
 train <- train %>% mutate(strange_life_sq = ifelse(life_sq <= 1, life_sq+1,0), strange_life_sq= ifelse(is.na(strange_life_sq),0,strange_life_sq), life_sq = ifelse(life_sq > 400 | life_sq <= 1, NA, life_sq))
 
 train <- train %>% mutate(kitch_sq = as.numeric(kitch_sq),strange_kitch_sq = ifelse(kitch_sq <= 1, kitch_sq+1,0),kitch_sq = ifelse(kitch_sq > 200 | kitch_sq <= 1, NA, kitch_sq))
+
 
 train <- train %>% mutate(num_room = as.numeric(num_room))
 
@@ -64,6 +72,15 @@ train <- train %>% mutate(material = as.factor(material), material = ifelse(mate
 train <- train %>% mutate(product_type = factor(product_type))
 
 train <- train %>% mutate(sub_area = factor(sub_area))
+
+# more cleaning
+
+
+train <- train %>% filter(kitch_sq < full_sq | is.na(kitch_sq))
+train <- train %>% filter(kitch_sq < life_sq | is.na(kitch_sq))
+
+train <- train %>% mutate(num_room = ifelse(num_room==0,NA,num_room))
+train <- train %>% mutate(max_floor = ifelse(max_floor > 50),NA,max_floor)
 
 ```
 
@@ -169,33 +186,32 @@ Some appartments seem to be in the same building. They have the same sub_area an
 #### Location data
 For the location data you have to read in an [external data file](https://www.kaggle.com/jtremoureux/administrative-divisions-of-moscow). You can find a tutorial [here](https://www.kaggle.com/product-feedback/32423#post179905).
 
-```{r warning=FALSE, message=FALSE, eval=FALSE}
+```{r warning=FALSE, message=FALSE}
   # Longitude and Latitude
-  library(rgdal) # read the shapefile with readOGR()
   shp <- readOGR(dsn = "../input/administrative-divisions-of-moscow", layer = "moscow_adm")
-  centroids <- coordinates(shp)  
+  centroids <- coordinates(shp)
   sub_area <- shp$RAION
   okrug <- shp$OKRUGS
   location_data <- data.frame(sub_area = sub_area, okrug = okrug, longitude=centroids[,1], latitude=centroids[,2])
-  train <- train %>% 
+
+  train <- train %>%
     left_join(location_data,by="sub_area")
-  
+
   # Calculate distance from Kremlin for each sub_area
-  library(geosphere)
   kremlin = data.frame(longitude = 37.617664,latitude = 55.752121)
-  train <- train %>% 
-    group_by(sub_area) %>% 
-    top_n(n = 1, wt=id) %>% 
-    ungroup %>% 
-    mutate(distance_from_kremlin = distm(.[c("longitude","latitude")], kremlin, fun=distHaversine)) %>% 
-    select(sub_area, distance_from_kremlin) %>% 
+  train <- train %>%
+    group_by(sub_area) %>%
+    top_n(n = 1, wt=id) %>%
+    ungroup %>%
+    mutate(distance_from_kremlin = distm(.[c("longitude","latitude")], kremlin, fun=distHaversine)) %>%
+    select(sub_area, distance_from_kremlin) %>%
     right_join(train, by="sub_area")
 
 ```
 
 
 #### General price level of Sub Areas
-```{r eval =F}
+```{r}
   # average price per raion
   train <- train %>% 
     group_by(sub_area) %>% 
@@ -206,7 +222,7 @@ For the location data you have to read in an [external data file](https://www.ka
   train <- train %>% 
     group_by(sub_area, year) %>% 
     summarize(mean_price_raion_year = mean(price_doc)) %>% 
-    right_join(train,by="sub_area")
+    right_join(train,by=c("sub_area","year"))
   
   # average price per sqm per raion
   train <- train %>% 
@@ -267,57 +283,71 @@ For the location data you have to read in an [external data file](https://www.ka
 
 
 ### Feature Importance
-
-# Basic features
+#### Features
 ```{r}
+outcomes <- train$price_doc
 
-outcome <- "price_doc"
-outcomes <- train[[outcome]]
-train_ids <- train$id
+basic_features <- c("full_sq", "life_sq", "kitch_sq", "num_room", "floor", "max_floor", "material", "build_year", "state", "product_type")
 
-basic_features <- c(outcome, "full_sq", "life_sq", "kitch_sq", "num_room", "floor", "max_floor", "material", "build_year", "state", "product_type")
-
+new_features <- c("month_of_year","week_of_year", "day_of_month", "day_of_week", "floor_from_top", "floor_by_maxfloor", "roomsize", "life_proportion", "kitchen_proportion", "extra_area", "age_at_sale", "n_sales_permonth", "distance_from_kremlin", "young_proportion", "work_proportion", "retire_proportion", "mean_building_height", "ratio_preschool",
+"ratio_school", "count_na_perrow")
 ```
 
+## Importance Analysis
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+  predictors <- c(basic_features,new_features)
 
-```{r}
+  train_set <- select(train, one_of(predictors))
 
-newfeatures <- c("age_at_sale", "")
+  dummy <- dummyVars(~.,train_set)
+  train_matrix <- predict(dummy,train_set)
 
-for (i in 1:10)
-predictors <- c(setdiff(basic_features,outcome),"age_at_sale")
+  train_sparse <- Matrix(train_matrix,sparse = T)
+  dtrain <- xgb.DMatrix(data = train_sparse,label=log(outcomes))
 
-
-train_set <- select(train, one_of(predictors))
-
-dummy <- dummyVars(~.,train_set)
-train_matrix <- predict(dummy,train_set)
-
-train_sparse <- Matrix(train_matrix,sparse = T)
-dtrain <- xgb.DMatrix(data = train_sparse,label=log(outcomes))
-
-# Params for xgboost
-param <- list(objective="reg:linear",
+  #### xgboost params
+  param <- list(objective="reg:linear",
               eval_metric = "rmse",
-              eta = .5,
+              eta = .2,
               gamma = 1,
               max_depth = 4,
               min_child_weight = 1,
-              subsample = .5,
+              subsample = .7,
               colsample_bytree = .7
-)
+  )
 
-# Train model
-xgb_model <- xgb.train(data = dtrain,
+  # CV for number of rounds
+  xgb_cv <- xgb.cv(data = dtrain,
+                  nfold = 2,
+                  params = param,
+                  nrounds = 150000,
+                  maximize = FALSE,
+                  prediction = TRUE,
+                  early.stop.round = 50,
+                  print_every_n = 50,
+                  verbose = 0
+  )
+  rounds <- xgb_cv$best_iteration  
+  
+  # Train model
+  xgb_model <- xgb.train(data = dtrain,
                        params = param,
                        watchlist = list(train = dtrain),
-                       nrounds = 1000,
+                       nrounds = rounds,
                        verbose = 0
-);gc()
+  )
 
+  imp_matrix_all <- xgb.importance(colnames(train_sparse),xgb_model)
 
-imp_matrix <- xgb.importance(colnames(train_sparse),xgb_model)
-xgb.plot.importance(imp_matrix)
+```
+
+We can see that our work payed off. There are several new features having higher importance than the basic features. 
+What we also see is that the time features (e.g., day of week) don't seem too important. 
+
+```{r, fig.height=10, width=10, echo=FALSE}
+  imp_matrix_all <- imp_matrix_all %>% mutate(group = ifelse(Feature %in% new_features,"new","old"))
+
+  ggplot(imp_matrix_all,aes(x=reorder(Feature,Gain),y=Gain, fill=group))+geom_bar(stat="identity")+coord_flip(ylim=c(0,0.2))+theme_bw()+labs(x="")
 ```
 
 
