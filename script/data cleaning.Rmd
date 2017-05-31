@@ -17,9 +17,10 @@ knitr::opts_knit$set(root.dir = "~/Desktop/Machine Learning/Kaggle/Sberbank/sber
   library(xgboost)
   library(lubridate)
   library(Matrix)
+  library(stringr)
 
-  train <- read_csv('../input/train.csv')
-  test <- read_csv('../input/test.csv')
+  train <- fread('../input/train.csv')
+  test <- fread('../input/test.csv')
   
   train$type = "train"
   test$type = "test"
@@ -30,8 +31,10 @@ knitr::opts_knit$set(root.dir = "~/Desktop/Machine Learning/Kaggle/Sberbank/sber
   
 basic_features <- c("id", "timestamp", "price_doc", "full_sq", "life_sq", "kitch_sq", "num_room", "floor", "max_floor", "material", "build_year", "state", "product_type", "sub_area")
 
-  train <- train %>% select(one_of(basic_features))  
-  test <- test %>% select(one_of(setdiff(basic_features,"price_doc")))
+rest_features <- setdiff(names(train), basic_features)
+
+  train <- train %>% select(one_of(c(basic_features,rest_features)))  
+  test <- test %>% select(one_of(setdiff(c(basic_features,rest_features),"price_doc")))
 ```
 
 
@@ -40,7 +43,7 @@ basic_features <- c("id", "timestamp", "price_doc", "full_sq", "life_sq", "kitch
 train %>% count(price_doc) %>% filter(price_doc <= 3000000) %>% arrange(desc(n))
 
 #potentially remove these rows from train set
-train <- train %>% mutate(strange_price_doc = ifelse(price_doc %in% c(990000,999000,1000000,1100000,2000000,3000000), 1,0))
+train <- train %>% mutate(strange_price = ifelse(price_doc %in% c(990000,999000,1000000,1100000,2000000,3000000), 1,0))
 
 train <- train %>% filter(price_doc <= 1e08)
 ```
@@ -120,9 +123,9 @@ train <- train %>% mutate(build_year = ifelse(build_year > 1000000, mean(as.nume
 
 train <- train %>% mutate(build_year = ifelse(build_year > 2900, as.numeric(str_c("1",str_sub(build_year,2,4))), build_year))
 
-train <- train %>% mutate(strange_build_year = ifelse(build_year <= 1, build_year+1,0), build_year = ifelse(build_year < 1500, NA, build_year))
+train <- train %>% mutate(strange_build_year = ifelse(build_year <= 1, build_year+1,0), build_year = ifelse(build_year < 1800, NA, build_year))
 
-test <- test %>% mutate(strange_build_year = ifelse(build_year <= 1, build_year+1,0), build_year = ifelse(build_year < 1500, NA, build_year))
+test <- test %>% mutate(strange_build_year = ifelse(build_year <= 1, build_year+1,0), build_year = ifelse(build_year < 1800, NA, build_year))
 
 
 table(train$build_year)
@@ -131,11 +134,13 @@ table(test$build_year)
 
 ## floor
 ```{r}
-table(train$floor)
-table(test$floor)
 
 train <- train %>% mutate(floor = ifelse(floor > 45, round(floor/10), floor))
 test <- test %>% mutate(floor = ifelse(floor > 45, round(floor/10), floor))
+table(train$floor)
+table(test$floor)
+
+### to do: probably some floors of 1 are not real information
 ```
 
 ## max floor
@@ -154,48 +159,132 @@ test <- test %>% mutate(strange_max_floor = ifelse(max_floor <= 1, max_floor+1,0
 ```{r}
 train <- train %>% mutate(state= ifelse(state>10, round(state/10),state))
 
-train <- train %>% mutate(state = as.numeric(state), state = ifelse(state > 4, NA, state))
-test <- test %>% mutate(state = as.numeric(state), state = ifelse(state > 4, NA, state))
+train <- train %>% mutate(state = factor(state, exclude=NULL))
+test <- test %>% mutate(state = factor(state, exclude=NULL))
 
 ```
 
 
-### till here
-
-
 ## material
 ```{r}
-str(train$material)
-train <- train %>% mutate(material = as.numeric(material))
-table(train$material)
-str(test$material)
-table(test$material)
-
-train <- train %>% mutate(material = as.factor(material), material = ifelse(material == 3, NA, material))
-test <- test %>% mutate(material = as.factor(material), material = ifelse(material == 3, NA, material))
-
+train <- train %>% mutate(material = ifelse(material == 3, NA, material), material=factor(material, exclude=NULL))
+test <- test %>% mutate(material = ifelse(material == 3, NA, material), material=factor(material, exclude=NULL))
 ```
 
 
 ## product_type
 ```{r}
 str(train$product_type)
-train <- train %>% mutate(product_type = factor(product_type))
-table(train$product_type)
-str(test$product_type)
-test <- test %>% mutate(product_type = factor(product_type))
+train <- train %>% mutate(product_type = factor(product_type, exclude=NULL))
+test <- test %>% mutate(product_type = factor(product_type, exclude=NULL))
 table(test$product_type)
 
 ```
 
 # Subarea
 ```{r}
-train <- train %>% mutate(sub_area = factor(sub_area))
-test <- test %>% mutate(sub_area = factor(sub_area))
+train <- train %>% mutate(sub_area = factor(sub_area, exclude=NULL))
+test <- test %>% mutate(sub_area = factor(sub_area, exclude=NULL)) # only 145 Poselenie Klenovskoe not in test set
 ```
 
 
+
+# missing values in other features
+
+```{r fig.height=12}
+missing_values <- train %>% summarize_each(funs(sum(is.na(.))/n()))
+
+missing_values <- gather(missing_values, key="feature", value="missing_pct")
+missing_values %>% 
+  ggplot(aes(x=reorder(feature,missing_pct),y=missing_pct)) +
+  geom_bar(stat="identity",fill="red")+
+  coord_flip()+theme_bw()
+
+missing_values %>% filter(missing_pct>0) %>% arrange(desc(missing_pct))
+
+missing_values <- test %>% summarize_each(funs(sum(is.na(.))/n()))
+
+missing_values <- gather(missing_values, key="feature", value="missing_pct")
+missing_values %>% 
+  ggplot(aes(x=reorder(feature,missing_pct),y=missing_pct)) +
+  geom_bar(stat="identity",fill="red")+
+  coord_flip()+theme_bw()
+
+missing_values %>% filter(missing_pct>0) %>% arrange(desc(missing_pct))
+
+```
+
+
+# area_m ok
+
+#### Note: use raion popul, seems more reliable
+
+
+```{r}
+train <- train %>% mutate(school_education_centers_raion_pct = school_education_centers_raion/area_m*1e+06)
+test <- test %>% mutate(school_education_centers_raion_pct = school_education_centers_raion/area_m*1e+06)
+
+train <- train %>% mutate(school_education_centers_top_20_raion = ifelse(school_education_centers_top_20_raion>=1,1,0))
+test <- test %>% mutate(school_education_centers_top_20_raion = ifelse(school_education_centers_top_20_raion>=1,1,0))
+
+train <- train %>% mutate(hospital_beds_raion_pct = hospital_beds_raion/raion_popul)
+test <- test %>% mutate(hospital_beds_raion_pct = hospital_beds_raion/raion_popul)
+
+train <- train %>% mutate(healthcare_centers_raion_pct = healthcare_centers_raion/area_m*1e+06)
+test <- test %>% mutate(healthcare_centers_raion_pct = healthcare_centers_raion/area_m*1e+06)
+
+train <- train %>% mutate(university_top_20_raion = ifelse(university_top_20_raion>=1,1,0))
+test <- test %>% mutate(university_top_20_raion = ifelse(university_top_20_raion>=1,1,0))
+
+train <- train %>% mutate(sport_objects_raion_pct = sport_objects_raion/area_m*1e+06)
+test <- test %>% mutate(sport_objects_raion_pct = sport_objects_raion/area_m*1e+06)
+
+train <- train %>% mutate(additional_education_raion_pct = additional_education_raion/area_m*1e+06)
+test <- test %>% mutate(additional_education_raion_pct = additional_education_raion/area_m*1e+06)
+
+train <- train %>% mutate(culture_objects_top_25 = NULL, culture_objects_top_25_raion = ifelse(culture_objects_top_25_raion >=2, 2, ifelse(culture_objects_top_25_raion>=1,1,0)))
+test <- test %>% mutate(culture_objects_top_25 = NULL, culture_objects_top_25_raion = ifelse(culture_objects_top_25_raion >=2, 2, ifelse(culture_objects_top_25_raion>=1,1,0)))
+
+train <- train %>% mutate(shopping_centers_raion_pct = shopping_centers_raion/area_m*1e+06)
+test <- test %>% mutate(shopping_centers_raion_pct = shopping_centers_raion/area_m*1e+06)
+
+train <- train %>% mutate(office_raion = office_raion/area_m*1e+06)
+test <- test %>% mutate(office_raion = office_raion/area_m*1e+06)
+
+train <- train %>% mutate(thermal_power_plant_raion = as.numeric(as.factor(thermal_power_plant_raion)))
+test <- test %>% mutate(thermal_power_plant_raion = as.numeric(as.factor(thermal_power_plant_raion)))
+
+train <- train %>% mutate(incineration_raion = as.numeric(as.factor(incineration_raion)))
+test <- test %>% mutate(incineration_raion = as.numeric(as.factor(incineration_raion)))
+
+train <- train %>% mutate(oil_chemistry_raion = as.numeric(as.factor(oil_chemistry_raion)))
+test <- test %>% mutate(oil_chemistry_raion = as.numeric(as.factor(oil_chemistry_raion)))
+
+train <- train %>% mutate(radiation_raion = as.numeric(as.factor(radiation_raion)))
+test <- test %>% mutate(radiation_raion = as.numeric(as.factor(radiation_raion)))
+
+train <- train %>% mutate(railroad_terminal_raion = as.numeric(as.factor(railroad_terminal_raion)))
+test <- test %>% mutate(railroad_terminal_raion = as.numeric(as.factor(railroad_terminal_raion)))
+
+train <- train %>% mutate(big_market_raion = as.numeric(as.factor(big_market_raion)))
+test <- test %>% mutate(big_market_raion = as.numeric(as.factor(big_market_raion)))
+
+train <- train %>% mutate(nuclear_reactor_raion = as.numeric(as.factor(nuclear_reactor_raion)))
+test <- test %>% mutate(nuclear_reactor_raion = as.numeric(as.factor(nuclear_reactor_raion)))
+
+train <- train %>% mutate(detention_facility_raion = as.numeric(as.factor(detention_facility_raion)))
+test <- test %>% mutate(detention_facility_raion = as.numeric(as.factor(detention_facility_raion)))
+```
+
+
+
+
+
 ### Deal with NaNs
+
+#### impute product_type with mice package
+
+
 #### replace missing life_sq according to full_sq square mean ratio
 ```{r}
 train <- train %>% mutate(life_sq=ifelse(is.na(life_sq) & !is.na(full_sq), full_sq*0.64, life_sq))
@@ -483,4 +572,3 @@ write.table(data.frame(id=test_ids, price_doc=preds$pred), "submission.csv", sep
 ## Problem 3: sometimes max_floor > floor
 
 ## some values in kitch_sq are years possibly build_year
-

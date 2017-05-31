@@ -251,10 +251,38 @@ train <- train %>% mutate(detention_facility_raion = as.numeric(as.factor(detent
 test <- test %>% mutate(detention_facility_raion = as.numeric(as.factor(detention_facility_raion)))
 ```
 
+#### Convert to same data type many doubles in test, no doubles in train
+```{r}
+names(train) <- str_replace_all(names(train),"^[0-9]","a_")
+names(train) <- str_replace_all(names(train),"-","_")
+names(test) <- str_replace_all(names(test),"^[0-9]","a_")
+names(test) <- str_replace_all(names(test),"-","_")
+train <- train %>% mutate_if(is.numeric,as.double)
+test <- test %>% mutate_if(is.numeric,as.double)
+
+```
+
 
 ```{r}
+train <- train %>% mutate(train_test = "train")
+test <- test %>% mutate(train_test = "test")
 full <- bind_rows(train,test)
 ```
+
+
+
+## Look at distribution of features between train and test
+
+```{r}
+full %>% ggplot(aes(x=full_sq)) + geom_line(stat="density", aes(color=train_test),size=1.2, trim=T)+geom_rug()+facet_grid(product_type~.)+coord_cartesian(xlim=c(10,200))
+```
+```{r}
+full %>% ggplot(aes(x=life_sq)) + stat_density(geom="line", aes(group=train_test,color=train_test),size=1.2,na.rm=T, trim=T)+facet_grid(product_type~.)+coord_cartesian(xlim=c(0,100))
+```
+```{r}
+full %>% ggplot(aes(x=kitch_sq)) + stat_density(geom="line", aes(group=train_test,color=train_test),size=1.2,na.rm=T, trim=T)+facet_grid(product_type~.)+coord_cartesian(xlim=c(0,25))
+```
+
 
 ## Engineering
 
@@ -499,13 +527,13 @@ test <- test %>%
 
 ```{r}
 
-tmp <- train %>% select(year, product_type, price_doc)
-fit <- lm(price_doc~year+product_type, tmp)
-summary(fit)
-lm_preds <- data.frame(year=2011:2015, preds=predict(fit,newdata = expand.grid(year=2011:2015, product_type=c("Investment", "OwnerOccupier"))))
+mean_prices <- train %>% group_by(product_type, year_month) %>% summarize(m=mean(price_doc))
 
-train <- train %>% left_join(lm_preds)
-train <- train %>% mutate(price_doc = price_doc - preds + max(preds))
+train <- train %>% left_join(mean_prices, by=c("year_month","product_type"))
+
+overall_mean <- train %>% filter(year>=2014) %>% group_by(product_type) %>% summarize(m=mean(price_doc)) %>% .[[1]]
+
+train <- train %>% mutate(price_normal = price_doc-mean_prices + overall_mean)
 
 ```
 
@@ -516,9 +544,9 @@ outcomes <- train %>% filter(strange_price == 0) %>% select(price_doc) %>% .[[1]
 #outcomes <- train %>% select(price_doc) %>% .[[1]]
 
 
-#basic_features <- c("full_sq", "life_sq", "kitch_sq", "num_room", "floor", "max_floor", "material", "build_year", "state", "product_type")
+basic_features <- c("full_sq", "life_sq", "kitch_sq", "num_room", "floor", "max_floor", "material", "build_year", "state", "product_type")
 
-basic_features <- names(train)[15:51]
+#basic_features <- setdiff(names(train),c("id","timestamp","year","year_month","appartment_name","mean_price_persqm_raion","mean_price_raion_year","mean_price_raion","price_rank_raion","sub_area","price_doc"))
 
 new_features <- c("month_of_year","week_of_year", "day_of_month", "day_of_week", "floor_from_top", "floor_by_maxfloor", "roomsize", "life_proportion", "kitchen_proportion", "extra_area", "age_at_sale", "n_sales_permonth", "distance_from_kremlin", "young_proportion", "work_proportion", "retire_proportion", "mean_building_height", "ratio_preschool",
 "ratio_school", "count_na_perrow", "angle_from_kremlin", "bearing.x", "bearing.y", "bearing.xy", "pop_density_raion", "school_education_centers_raion_pct", "hospital_beds_raion_pct", "healthcare_centers_raion_pct", "sport_objects_raion_pct", "additional_education_raion_pct", "shopping_centers_raion_pct")
@@ -529,7 +557,7 @@ new_features <- c("month_of_year","week_of_year", "day_of_month", "day_of_week",
 
 ## Importance Analysis
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
-  predictors <- c(basic_features,new_features)
+  #predictors <- c(basic_features,new_features)
   predictors <- basic_features
 
 
@@ -551,11 +579,9 @@ new_features <- c("month_of_year","week_of_year", "day_of_month", "day_of_week",
   #### xgboost params
   param <- list(objective="reg:linear",
               eval_metric = "rmse",
-              eta = .1,
-              gamma = 0,
-              max_depth = 4,
-              min_child_weight = 2,
-              subsample = .7,
+              eta = .5,
+              max_depth = 5,
+              subsample = 1,
               colsample_bytree = .7
   )
 
