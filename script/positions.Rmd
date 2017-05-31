@@ -1,0 +1,64 @@
+---
+title: "Locations"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+```{r}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(DT)
+library(tidyr)
+library(corrplot)
+library(leaflet)
+library(lubridate)
+library(rgdal)
+
+train_loc <- fread('../input/train_lat_lon.csv')
+test_loc <- fread('../input/test_lat_lon.csv')
+
+train <- fread('../input/train.csv')
+test <- fread('../input/test.csv')
+```
+
+```{r}
+train <- train %>% left_join(train_loc, by="id") 
+train <- train %>% mutate(lat_lon=str_c(lat,lon,sep = "_"))
+test <- test %>% left_join(test_loc, by="id") 
+test <- test %>% mutate(lat_lon=str_c(lat,lon,sep = "_"))
+
+```
+
+```{r}
+ # Longitude and Latitude
+  shp <- readOGR(dsn = "../input/administrative-divisions-of-moscow", layer = "moscow_adm")
+  centroids <- coordinates(shp)
+  sub_area <- shp$RAION
+  okrug <- shp$OKRUGS
+  location_data <- data.frame(sub_area = sub_area, okrug = okrug, longitude=centroids[,1], latitude=centroids[,2])
+
+  train<-train %>% left_join(location_data, by="sub_area")
+  test<-test %>% left_join(location_data, by="sub_area")
+  
+```
+
+```{r}
+tmp <- test %>% group_by(lat_lon) %>% summarize(n=n(), lat=mean(lat), lon=mean(lon), sub_area=first(sub_area), long_subarea = first(longitude), lat_subarea=first(latitude)) %>% arrange(desc(n))
+
+pal <- colorNumeric(palette = "RdYlGn",domain = tmp$n, reverse= TRUE)
+
+leaflet(tmp) %>% addTiles() %>% addCircleMarkers(lat = ~lat, lng = ~lon, col = ~pal(n), fill = TRUE, weight = 20, label = ~paste0("Count: ", n)) 
+
+leaflet(shp) %>% addTiles() %>% addPolygons() %>% addCircleMarkers(lat = tmp$lat, lng = tmp$lon, col = ~pal(tmp$n), fill = TRUE, label = ~paste0("Count: ", tmp$n)) 
+
+
+
+
+```
+
+

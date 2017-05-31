@@ -1,0 +1,57 @@
+---
+title: "CV Simulations"
+output:
+  html_document: default
+---
+
+```{r warning=FALSE, message=FALSE}
+library(ggplot2)
+library(xgboost)
+library(caret)
+library(dplyr)
+library(ggExtra)
+
+x <- 20+rnorm(10000)
+y <- 20+5*rnorm(10000)
+
+df <- data.frame(x,y)
+
+ggplot(df,aes(x=x,y=y))+geom_point()+theme_bw()
+
+df %>% summarize(m=mean(y))
+
+df$pred <- 20
+
+```
+
+```{r}
+preds <- seq(19,21,by=0.01)
+rmses <- vector(length=length(preds))
+rmsles <- vector(length=length(preds))
+for (i in seq_along(preds)) {
+  df$pred <- preds[i]
+  rmses[i]<- sqrt(mean((df$y-df$pred)^2))
+  rmsles[i]<- sqrt(mean((log(df$pred+1)-log(df$y+1))^2))
+}
+dfplot <- list()
+dfplot$x <- preds
+dfplot$rmse <- rmses
+dfplot$rmsle <- rmsles
+dfplot <- as.data.frame(dfplot)
+
+ggplot(dfplot,aes(x=x))+geom_point(aes(y=rmse),color="blue")
+ggplot(dfplot,aes(x=x))+geom_point(aes(y=rmsle),color="blue")
+
+```
+
+```{r}
+
+cat('rmse min: ', preds[which.min(dfplot$rmse)])
+
+cat('rmsle min: ', preds[which.min(dfplot$rmsle)])
+
+```
+
+
+
+
