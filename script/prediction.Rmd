@@ -176,11 +176,8 @@ test <- test %>% mutate(material = ifelse(material == 3, NA, material), material
 ## product_type
 ```{r}
 train <- train %>% mutate(product_type = factor(product_type, exclude=NULL))
-#test <- test %>% mutate(product_type = #ifelse(is.na(product_type),"Investment",product_type))
 
 test <- test %>% mutate(product_type = factor(product_type))
-
-
 
 ```
 
@@ -395,6 +392,12 @@ Some appartments seem to be in the same building. They have the same sub_area an
     group_by(year_month) %>% 
     summarize(n_sales_permonth = n()) %>% 
     right_join(test,by="year_month")
+  
+  # presale
+  train <- train %>% 
+    mutate(presale = ifelse(build_year>year,1,0))
+  test <- test %>% 
+    mutate(presale = ifelse(build_year>year,1,0))  
 
 ```
 
@@ -538,6 +541,17 @@ train <- train %>% mutate(price_normal = price_doc-mean_prices+overall_mean)
 
 ```
 
+
+
+#### Fix missing values in test set
+
+```{r}
+test <- test %>% mutate(product_type = ifelse(is.na(product_type) & build_year>=2016,"2",product_type)) # OwnerOccupier
+```
+
+
+
+
 ### Feature Importance
 #### Features
 ```{r}
@@ -639,13 +653,22 @@ write.csv(preds, '../submission.csv', row.names = FALSE, quote = FALSE)
 
 ```{r}
 
+predictors <- c(setdiff(names(train), exclude_features),"id")
+train_set <- train %>% filter(strange_price == 0) %>% select(one_of(predictors))
+test_set <- test %>% select(one_of(predictors))
+
+## train set = test set
 train_set <- test_set %>% filter(!is.na(product_type))
 outcomes <- as.numeric(train_set$product_type)-1
 train_set <- train_set %>% select(-product_type)
 
-
-
 test_set <- test_set %>% filter(is.na(product_type)) %>% select(-product_type)
+
+train_ids <- train_set$id
+test_ids <- test_set$id
+
+train_set <- train_set %>% select(-id)
+test_set <- test_set %>% select(-id)
 
 train_set <- train_set %>% mutate_if(is.character, as.factor)
 test_set <- test_set %>% mutate_if(is.character,as.factor)
@@ -664,7 +687,7 @@ dtest <- xgb.DMatrix(data = test_sparse)
   #### xgboost params
   param <- list(objective="binary:logistic",
               eval_metric = "auc",
-              eta = .1,
+              eta = .05,
               max_depth = 5,
               subsample = 0.7,
               colsample_bytree = .7
@@ -678,7 +701,7 @@ dtest <- xgb.DMatrix(data = test_sparse)
                   maximize = TRUE,
                   prediction = TRUE,
                   early.stop.round = 50,
-                  print_every_n = 50,
+                  print_every_n = 10,
                   verbose = 1
   )
   rounds <- xgb_cv$best_iteration  
@@ -688,10 +711,10 @@ dtest <- xgb.DMatrix(data = test_sparse)
                        params = param,
                        watchlist = list(train = dtrain),
                        nrounds = rounds,
-                       verbose = 0
+                       verbose = 1
   )
 
-  predict(xgb_model,dtest)>0.5
+  predict(xgb_model,dtest)
   
     imp_matrix_all <- xgb.importance(colnames(train_sparse),xgb_model)
 ggplot(head(imp_matrix_all,20),aes(x=reorder(Feature,Gain),y=Gain))+geom_bar(stat="identity")+coord_flip(ylim=c(0,0.2))+theme_bw()+labs(x="")
