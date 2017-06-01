@@ -175,9 +175,9 @@ test <- test %>% mutate(material = ifelse(material == 3, NA, material), material
 
 ## product_type
 ```{r}
-train <- train %>% mutate(product_type = factor(product_type, exclude=NULL))
+train <- train %>% mutate(product_type = as.factor(product_type))
 
-test <- test %>% mutate(product_type = factor(product_type))
+test <- test %>% mutate(product_type = as.factor(product_type))
 
 ```
 
@@ -255,8 +255,26 @@ names(train) <- str_replace_all(names(train),"^[0-9]","a_")
 names(train) <- str_replace_all(names(train),"-","_")
 names(test) <- str_replace_all(names(test),"^[0-9]","a_")
 names(test) <- str_replace_all(names(test),"-","_")
-train <- train %>% mutate_if(is.numeric,as.double)
-test <- test %>% mutate_if(is.numeric,as.double)
+
+```
+
+## Round values in test set to match train set
+```{r}
+#train <- train %>% mutate(full_sq = round(full_sq, digits=0), life_sq= round(life_sq, digits=0), kitch_sq=round(kitch_sq, digits=0))
+#test <- test %>% mutate(full_sq = round(full_sq, digits=0), life_sq= round(life_sq, digits=0), kitch_sq=round(kitch_sq, digits=0))
+```
+
+
+## Tverskoe problem 603 errors
+
+```{r}
+train[near(train$kremlin_km,0.07289655),] <- train %>% 
+  filter(near(kremlin_km,0.07289655)) %>% 
+  mutate_at(13:290,funs(replace(.,1:n(),NA)))
+
+test[near(test$kremlin_km,0.07289655),] <- test %>% 
+  filter(near(kremlin_km,0.07289655)) %>% 
+  mutate_at(13:290,funs(replace(.,1:n(),NA)))
 
 ```
 
@@ -266,6 +284,7 @@ train <- train %>% mutate(train_test = "train")
 test <- test %>% mutate(train_test = "test")
 full <- bind_rows(train,test)
 ```
+
 
 
 
@@ -412,7 +431,7 @@ For the location data you have to read in an [external data file](https://www.ka
   centroids <- coordinates(shp)
   sub_area <- shp$RAION
   okrug <- shp$OKRUGS
-  location_data <- data.frame(sub_area = sub_area, okrug = okrug, longitude=centroids[,1], latitude=centroids[,2])
+  location_data <- data.frame(sub_area = sub_area, okrug = okrug, sub_area_lon=centroids[,1], sub_area_lat=centroids[,2])
 
   train <- train %>%
     left_join(location_data,by="sub_area")
@@ -427,7 +446,7 @@ For the location data you have to read in an [external data file](https://www.ka
     group_by(sub_area) %>%
     top_n(n = 1, wt=id) %>%
     ungroup %>%
-    mutate(distance_from_kremlin = distm(.[c("longitude","latitude")], kremlin, fun=distHaversine)/1000, angle_from_kremlin = bearing(.[c("longitude","latitude")], kremlin)) %>%
+    mutate(distance_from_kremlin = distm(.[c("sub_area_lon","sub_area_lat")], kremlin, fun=distHaversine)/1000, angle_from_kremlin = bearing(.[c("sub_area_lon","sub_area_lat")], kremlin)) %>%
     select(sub_area, distance_from_kremlin, angle_from_kremlin) %>%
     right_join(train, by="sub_area")
   
@@ -437,7 +456,7 @@ test <- test %>%
     group_by(sub_area) %>%
     top_n(n = 1, wt=id) %>%
     ungroup %>%
-    mutate(distance_from_kremlin = distm(.[c("longitude","latitude")], kremlin, fun=distHaversine)/1000, angle_from_kremlin = bearing(.[c("longitude","latitude")], kremlin)) %>%
+    mutate(distance_from_kremlin = distm(.[c("sub_area_lon","sub_area_lat")], kremlin, fun=distHaversine)/1000, angle_from_kremlin = bearing(.[c("sub_area_lon","sub_area_lat")], kremlin)) %>%
     select(sub_area, distance_from_kremlin, angle_from_kremlin) %>%
     right_join(test, by="sub_area")
   
@@ -471,6 +490,13 @@ test <- test %>%
   train <- train %>% group_by(sub_area) %>% mutate(price_rank_raion = rank(mean_price_raion))
   test <- train %>% group_by(sub_area) %>% summarize(price_rank_raion = mean(price_rank_raion)) %>% select(sub_area,price_rank_raion) %>% right_join(test, by="sub_area")  
 ```
+
+#### Poselenie vs rest
+```{r}
+train <- train %>% mutate(poselenie = ifelse(str_detect(sub_area, 'Poselenie'),1,0))
+test <- test %>% mutate(poselenie = ifelse(str_detect(sub_area, 'Poselenie'),1,0))
+```
+
 
 #### Population characteristics
 ```{r }
@@ -546,7 +572,17 @@ train <- train %>% mutate(price_normal = price_doc-mean_prices+overall_mean)
 #### Fix missing values in test set
 
 ```{r}
-test <- test %>% mutate(product_type = ifelse(is.na(product_type) & build_year>=2016,"2",product_type)) # OwnerOccupier
+
+test <- test %>% mutate(product_type=as.character(product_type))
+
+test <- test %>% mutate(product_type = ifelse(is.na(product_type) & build_year>2016,"OwnerOccupier",product_type)) # OwnerOccupier
+
+test <- test %>% mutate(product_type = ifelse(is.na(product_type),"Investment",product_type)) # Investment
+
+test <- test %>% mutate(product_type = as.factor(product_type))
+
+
+
 ```
 
 
@@ -719,6 +755,20 @@ dtest <- xgb.DMatrix(data = test_sparse)
     imp_matrix_all <- xgb.importance(colnames(train_sparse),xgb_model)
 ggplot(head(imp_matrix_all,20),aes(x=reorder(Feature,Gain),y=Gain))+geom_bar(stat="identity")+coord_flip(ylim=c(0,0.2))+theme_bw()+labs(x="")
 ```
+
+
+
+
+
+### EDA
+cafe count
+```{r}
+tmp <- train %>% select(one_of(c("price_doc", "cafe_count_500", "cafe_count_1000", "cafe_count_1500", "cafe_count_2000", "cafe_count_3000", "cafe_count_5000")))
+
+corrplot(cor(tmp))
+```
+
+
 
 
 ### Current To-do List
