@@ -48,7 +48,7 @@ test <- test %>% mutate(lat_lon=str_c(lat,lon,sep = "_"))
 ```
 
 ```{r}
-tmp <- test %>% group_by(lat_lon) %>% summarize(n=n(), lat=mean(lat), lon=mean(lon), sub_area=first(sub_area), long_subarea = first(longitude), lat_subarea=first(latitude)) %>% arrange(desc(n))
+tmp <- train %>% group_by(lat_lon) %>% summarize(n=n(), lat=mean(lat), lon=mean(lon), sub_area=first(sub_area), long_subarea = first(longitude), lat_subarea=first(latitude)) %>% arrange(desc(n))
 
 pal <- colorNumeric(palette = "RdYlGn",domain = tmp$n, reverse= TRUE)
 

@@ -50,7 +50,7 @@ train %>% count(price_doc) %>% filter(price_doc <= 3000000) %>% arrange(desc(n))
 #potentially remove these rows from train set
 train <- train %>% mutate(strange_price = ifelse(price_doc %in% c(990000,999000,1000000,1100000,2000000,3000000), 1,0))
 
-train <- train %>% filter(price_doc <= 1e08)
+train <- train %>% filter(price_doc <= 9e07)
 ```
 
 ## Full square
@@ -176,9 +176,10 @@ test <- test %>% mutate(material = ifelse(material == 3, NA, material), material
 ## product_type
 ```{r}
 train <- train %>% mutate(product_type = factor(product_type, exclude=NULL))
-test <- test %>% mutate(product_type = ifelse(is.na(product_type),"Investment",product_type))
+#test <- test %>% mutate(product_type = #ifelse(is.na(product_type),"Investment",product_type))
 
 test <- test %>% mutate(product_type = factor(product_type))
+
 
 
 ```
@@ -423,7 +424,7 @@ For the location data you have to read in an [external data file](https://www.ka
     group_by(sub_area) %>%
     top_n(n = 1, wt=id) %>%
     ungroup %>%
-    mutate(distance_from_kremlin = distm(.[c("longitude","latitude")], kremlin, fun=distHaversine), angle_from_kremlin = bearing(.[c("longitude","latitude")], kremlin)) %>%
+    mutate(distance_from_kremlin = distm(.[c("longitude","latitude")], kremlin, fun=distHaversine)/1000, angle_from_kremlin = bearing(.[c("longitude","latitude")], kremlin)) %>%
     select(sub_area, distance_from_kremlin, angle_from_kremlin) %>%
     right_join(train, by="sub_area")
   
@@ -433,7 +434,7 @@ test <- test %>%
     group_by(sub_area) %>%
     top_n(n = 1, wt=id) %>%
     ungroup %>%
-    mutate(distance_from_kremlin = distm(.[c("longitude","latitude")], kremlin, fun=distHaversine), angle_from_kremlin = bearing(.[c("longitude","latitude")], kremlin)) %>%
+    mutate(distance_from_kremlin = distm(.[c("longitude","latitude")], kremlin, fun=distHaversine)/1000, angle_from_kremlin = bearing(.[c("longitude","latitude")], kremlin)) %>%
     select(sub_area, distance_from_kremlin, angle_from_kremlin) %>%
     right_join(test, by="sub_area")
   
@@ -527,29 +528,31 @@ test <- test %>%
 
 ```{r}
 
-mean_prices <- train %>% group_by(product_type, year_month) %>% summarize(m=mean(price_doc))
+mean_prices <- train %>% group_by(year_month) %>% summarize(mean_prices=mean(price_doc))
 
-train <- train %>% left_join(mean_prices, by=c("year_month","product_type"))
+train <- train %>% left_join(mean_prices, by=c("year_month"))
 
-overall_mean <- train %>% filter(year>=2014) %>% group_by(product_type) %>% summarize(m=mean(price_doc)) %>% .[[1]]
+overall_mean <- train %>% filter(year>=2015) %>%  summarize(overall_mean=mean(price_doc)) %>% .[[1]]
 
-train <- train %>% mutate(price_normal = price_doc-mean_prices + overall_mean)
+train <- train %>% mutate(price_normal = price_doc-mean_prices+overall_mean)
 
 ```
 
 ### Feature Importance
 #### Features
 ```{r}
-outcomes <- train %>% filter(strange_price == 0) %>% select(price_doc) %>% .[[1]]
+outcomes <- train %>% filter(strange_price == 0) %>% select(price_normal) %>% .[[1]]
 #outcomes <- train %>% select(price_doc) %>% .[[1]]
-
 
 basic_features <- c("full_sq", "life_sq", "kitch_sq", "num_room", "floor", "max_floor", "material", "build_year", "state", "product_type")
 
 #basic_features <- setdiff(names(train),c("id","timestamp","year","year_month","appartment_name","mean_price_persqm_raion","mean_price_raion_year","mean_price_raion","price_rank_raion","sub_area","price_doc"))
 
 new_features <- c("month_of_year","week_of_year", "day_of_month", "day_of_week", "floor_from_top", "floor_by_maxfloor", "roomsize", "life_proportion", "kitchen_proportion", "extra_area", "age_at_sale", "n_sales_permonth", "distance_from_kremlin", "young_proportion", "work_proportion", "retire_proportion", "mean_building_height", "ratio_preschool",
-"ratio_school", "count_na_perrow", "angle_from_kremlin", "bearing.x", "bearing.y", "bearing.xy", "pop_density_raion", "school_education_centers_raion_pct", "hospital_beds_raion_pct", "healthcare_centers_raion_pct", "sport_objects_raion_pct", "additional_education_raion_pct", "shopping_centers_raion_pct")
+"ratio_school", "count_na_perrow", "angle_from_kremlin", "bearing.x", "bearing.y", "bearing.xy", "pop_density_raion", "school_education_centers_raion_pct", "hospital_beds_raion_pct", "healthcare_centers_raion_pct", "sport_objects_raion_pct", "additional_education_raion_pct", "shopping_centers_raion_pct", "okrug")
+
+exclude_features <- c("price_normal","mean_prices", "count_na_perrow", "train_test", "price_doc", "timestamp", "id", "mean_price_raion_year", "mean_price_raion", "mean_price_persqm_raion", "year", "year_month", "sub_area", "appartment_name", "n", "strange_price")
+
 ```
 
 
@@ -558,7 +561,8 @@ new_features <- c("month_of_year","week_of_year", "day_of_month", "day_of_week",
 ## Importance Analysis
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
   #predictors <- c(basic_features,new_features)
-  predictors <- basic_features
+  #predictors <- basic_features
+  predictors <- setdiff(names(train), exclude_features)
 
 
   train_set <- train %>% filter(strange_price == 0) %>% select(one_of(predictors))
@@ -573,15 +577,16 @@ new_features <- c("month_of_year","week_of_year", "day_of_month", "day_of_week",
   train_sparse <- Matrix(train_matrix,sparse = T)
   test_sparse <- Matrix(test_matrix, sparse=T)
   
-  dtrain <- xgb.DMatrix(data = train_sparse,label=log(outcomes))
+  dtrain <- xgb.DMatrix(data = train_sparse,label=log(outcomes+1))
   dtest <- xgb.DMatrix(data = test_sparse)  
 
   #### xgboost params
   param <- list(objective="reg:linear",
               eval_metric = "rmse",
-              eta = .5,
-              max_depth = 5,
-              subsample = 1,
+              eta = .1,
+              max_depth = 4,
+              gamma = 1,
+              subsample = 0.7,
               colsample_bytree = .7
   )
 
@@ -616,21 +621,81 @@ What we also see is that the time features (e.g., day of week) don't seem too im
 ```{r, fig.height=10, width=10, echo=FALSE}
   imp_matrix_all <- imp_matrix_all %>% mutate(group = ifelse(Feature %in% new_features,"new","old"))
 
-  ggplot(imp_matrix_all,aes(x=reorder(Feature,Gain),y=Gain, fill=group))+geom_bar(stat="identity")+coord_flip(ylim=c(0,0.2))+theme_bw()+labs(x="")
+  ggplot(head(imp_matrix_all,20),aes(x=reorder(Feature,Gain),y=Gain, fill=group))+geom_bar(stat="identity")+coord_flip(ylim=c(0,0.2))+theme_bw()+labs(x="")
 ```
 
 ### make prediction
 
 ```{r}
-preds <- data.frame(id=test_id, price_doc = exp(predict(xgb_model,dtest)))
+preds <- data.frame(id=test_id, price_doc = exp(predict(xgb_model,dtest))-1)
 
-mean_price <- lm_preds %>% filter(year>=2014) %>% summarize(m=mean(preds)) %>% .[[1]]
-
-preds$price_doc <- (preds$price_doc - (mean(preds$price_doc)-mean_price))
+#preds$price_doc <- preds$price_doc / (mean(preds$price_doc)/7110466)
+preds$price_doc <- preds$price_doc * (6600466/mean(train$price_normal))
 
 write.csv(preds, '../submission.csv', row.names = FALSE, quote = FALSE)
 ```
 
+### predict product_type in test set
+
+```{r}
+
+train_set <- test_set %>% filter(!is.na(product_type))
+outcomes <- as.numeric(train_set$product_type)-1
+train_set <- train_set %>% select(-product_type)
+
+
+
+test_set <- test_set %>% filter(is.na(product_type)) %>% select(-product_type)
+
+train_set <- train_set %>% mutate_if(is.character, as.factor)
+test_set <- test_set %>% mutate_if(is.character,as.factor)
+train_set$railroad_1line <- NULL
+test_set$railroad_1line <- NULL
+
+dummy <- dummyVars(~.,train_set)
+train_matrix <- predict(dummy, train_set)
+train_sparse <- Matrix(train_matrix,sparse=TRUE)
+test_matrix <- predict(dummy, test_set)
+test_sparse <- Matrix(test_matrix,sparse=TRUE)
+
+dtrain <- xgb.DMatrix(data = train_sparse,label=outcomes)
+dtest <- xgb.DMatrix(data = test_sparse)
+
+  #### xgboost params
+  param <- list(objective="binary:logistic",
+              eval_metric = "auc",
+              eta = .1,
+              max_depth = 5,
+              subsample = 0.7,
+              colsample_bytree = .7
+  )
+
+  # CV for number of rounds
+  xgb_cv <- xgb.cv(data = dtrain,
+                  nfold = 5,
+                  params = param,
+                  nrounds = 150000,
+                  maximize = TRUE,
+                  prediction = TRUE,
+                  early.stop.round = 50,
+                  print_every_n = 50,
+                  verbose = 1
+  )
+  rounds <- xgb_cv$best_iteration  
+  
+  # Train model
+  xgb_model <- xgb.train(data = dtrain,
+                       params = param,
+                       watchlist = list(train = dtrain),
+                       nrounds = rounds,
+                       verbose = 0
+  )
+
+  predict(xgb_model,dtest)>0.5
+  
+    imp_matrix_all <- xgb.importance(colnames(train_sparse),xgb_model)
+ggplot(head(imp_matrix_all,20),aes(x=reorder(Feature,Gain),y=Gain))+geom_bar(stat="identity")+coord_flip(ylim=c(0,0.2))+theme_bw()+labs(x="")
+```
 
 
 ### Current To-do List
