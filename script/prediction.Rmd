@@ -1,5 +1,5 @@
 ---
-title: "An Updated Collection of New Features"
+title: "Prediction Notebook"
 author: "Philipp Spachtholz"
 output:
   html_document:
@@ -8,20 +8,6 @@ output:
     theme: paper
 ---
 
-There are already a lot of good ideas for feature engineering around for this competition. However, they are all scattered across
-different kernels and discussion threads.**Therefore, my plan here is to provide an easily accessible and extensible list of ideas for feature engineering (together with their implementation in R).**
-
-```
-Recent updates:
-- added Feature Importance Analysis
-- added more Data cleaning
-- grouped appartments in the same building complex together
-```
-
-Feel free to add new ideas in the comments and
-I'll add them to the list and please don't forget to **upvote** if you find it useful :-).
-
-Having said all that, let's jump right into it:
 
 ### Initialization
 ```{r message=FALSE, warning=FALSE}
@@ -423,10 +409,7 @@ Some appartments seem to be in the same building. They have the same sub_area an
 ### Sub Area characteristics
 
 #### Location data
-For the location data you have to read in an [external data file](https://www.kaggle.com/jtremoureux/administrative-divisions-of-moscow). You can find a tutorial [here](https://www.kaggle.com/product-feedback/32423#post179905).
-
 ```{r warning=FALSE, message=FALSE}
-  # Longitude and Latitude
   shp <- readOGR(dsn = "../input/administrative-divisions-of-moscow", layer = "moscow_adm")
   centroids <- coordinates(shp)
   sub_area <- shp$RAION
@@ -569,7 +552,7 @@ train <- train %>% mutate(price_normal = price_doc-mean_prices+overall_mean)
 
 
 
-#### Fix missing values in test set
+#### Fix missing product_type in test set
 
 ```{r}
 
@@ -581,11 +564,7 @@ test <- test %>% mutate(product_type = ifelse(is.na(product_type),"Investment",p
 
 test <- test %>% mutate(product_type = as.factor(product_type))
 
-
-
 ```
-
-
 
 
 ### Feature Importance
@@ -633,7 +612,7 @@ exclude_features <- c("price_normal","mean_prices", "count_na_perrow", "train_te
   #### xgboost params
   param <- list(objective="reg:linear",
               eval_metric = "rmse",
-              eta = .1,
+              eta = .5,
               max_depth = 4,
               gamma = 1,
               subsample = 0.7,
@@ -758,29 +737,89 @@ ggplot(head(imp_matrix_all,20),aes(x=reorder(Feature,Gain),y=Gain))+geom_bar(sta
 
 
 
-
-
 ### EDA
 cafe count
 ```{r}
 tmp <- train %>% select(one_of(c("price_doc", "cafe_count_500", "cafe_count_1000", "cafe_count_1500", "cafe_count_2000", "cafe_count_3000", "cafe_count_5000")))
 
-corrplot(cor(tmp))
+corrplot(cor(tmp,use = "pairwise.complete.obs"))
 ```
 
+```{r}
+tmp <- train %>% select(c(starts_with('cafe_sum'),one_of("price_doc")))
+
+corrplot(cor(tmp,use = "pairwise.complete.obs"))
+```
+
+```{r}
+tmp <- train %>% select(c(starts_with('cafe_avg'),one_of("price_doc")))
+
+corrplot(cor(tmp,use = "pairwise.complete.obs"))
+```
+
+```{r}
+tmp <- train %>% filter(year>=2014) %>% select(c(one_of("price_doc"),contains('_price_')))
+
+corrplot(cor(tmp,use = "pairwise.complete.obs"))
+```
+
+Der beste Indikator == cafe_count_x_price_1500
 
 
+```{r}
+tmp <- train %>% filter(year>=2014) %>% select(c(one_of("price_doc"),contains('church')))
 
-### Current To-do List
+corrplot(cor(tmp,use = "pairwise.complete.obs"))
+```
 
-1. Sales (by year or month) for grouped appartments.
+Der beste Indikator == cafe_count_x_price_1500
 
+Tendenziell immer innerhalb 5000 am besten
+sport, mosque, leisure, market, prom_part, office_count, office_sqm, trc_count
+```{r}
+tmp <- train %>% filter(year>=2014) %>% select(c(one_of("price_doc"),contains('sport')))
+corrplot(cor(tmp,use = "pairwise.complete.obs"))
+sort(cor(tmp,use = "pairwise.complete.obs")[1,],decreasing = T)
+```
 
-#### Disclaimer
-1. Not all of these features are going to help your model prediction. So choose yours wisely.
-2. For consistency, I will demonstrate all these features for the train set only, while for some features it would make sense to calculate them for the full dataset
-3. For easier readibility, I do only minimal data cleaning in this kernel. As the new features are e.g. combinations of the basic features, it would make sense to properly clean those first.
-4. While I added some features on my own, most of the features were developed by someone else. As it is not easy to figure out who had the idea first, unfortunately I cannot give you proper credt. So for all of those who shared their ideas: my gratitude goes to you. 
+```{r}
+tmp <- train %>% filter(year>=2014) %>% select(c(one_of("price_doc"),contains('mosque')))
+corrplot(cor(tmp,use = "pairwise.complete.obs"))
+sort(cor(tmp,use = "pairwise.complete.obs")[1,],decreasing = T)
+```
 
+```{r}
+tmp <- train %>% filter(year>=2014) %>% select(c(one_of("price_doc"),contains('leisure')))
+corrplot(cor(tmp,use = "pairwise.complete.obs"))
+sort(cor(tmp,use = "pairwise.complete.obs")[1,],decreasing = T)
+```
 
+```{r}
+tmp <- train %>% filter(year>=2014) %>% select(c(one_of("price_doc"),contains('market')))
+corrplot(cor(tmp,use = "pairwise.complete.obs"))
+sort(cor(tmp,use = "pairwise.complete.obs")[1,],decreasing = T)
+```
 
+```{r}
+tmp <- train %>% filter(year>=2014) %>% select(c(one_of("price_doc"),contains('prom_part')))
+corrplot(cor(tmp,use = "pairwise.complete.obs"))
+sort(cor(tmp,use = "pairwise.complete.obs")[1,],decreasing = T)
+```
+
+```{r}
+tmp <- train %>% filter(year>=2014) %>% select(c(one_of("price_doc"),contains('green_part')))
+corrplot(cor(tmp,use = "pairwise.complete.obs"))
+sort(cor(tmp,use = "pairwise.complete.obs")[1,])
+```
+
+```{r}
+tmp <- train %>% filter(year>=2014) %>% select(c(one_of("price_doc"),contains('office_count')))
+corrplot(cor(tmp,use = "pairwise.complete.obs"))
+sort(cor(tmp,use = "pairwise.complete.obs")[1,],decreasing = T)
+```
+
+```{r}
+tmp <- train %>% filter(year>=2014) %>% select(c(one_of("price_doc"),contains('trc_count')))
+corrplot(cor(tmp,use = "pairwise.complete.obs"))
+sort(cor(tmp,use = "pairwise.complete.obs")[1,],decreasing = T)
+```

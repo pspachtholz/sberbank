@@ -24,6 +24,8 @@ test_loc <- fread('../input/test_lat_lon.csv')
 
 train <- fread('../input/train.csv')
 test <- fread('../input/test.csv')
+
+build_years <- fread('../input/homes_year.csv')
 ```
 
 ```{r}
@@ -50,15 +52,22 @@ test <- test %>% mutate(lat_lon=str_c(lat,lon,sep = "_"))
 ```{r}
 tmp <- train %>% group_by(lat_lon) %>% summarize(n=n(), lat=mean(lat), lon=mean(lon), sub_area=first(sub_area), long_subarea = first(longitude), lat_subarea=first(latitude)) %>% arrange(desc(n))
 
+tmp2 <- tmp %>% group_by(sub_area) %>% summarize(lat_subarea=mean(lat_subarea), long_subarea=mean(long_subarea))
+
 pal <- colorNumeric(palette = "RdYlGn",domain = tmp$n, reverse= TRUE)
 
 leaflet(tmp) %>% addTiles() %>% addCircleMarkers(lat = ~lat, lng = ~lon, col = ~pal(n), fill = TRUE, weight = 20, label = ~paste0("Count: ", n)) 
 
-leaflet(shp) %>% addTiles() %>% addPolygons() %>% addCircleMarkers(lat = tmp$lat, lng = tmp$lon, col = ~pal(tmp$n), fill = TRUE, label = ~paste0("Count: ", tmp$n)) 
-
-
+leaflet(shp) %>% addTiles() %>% addPolygons() %>% addCircleMarkers(lat = tmp$lat, lng = tmp$lon, col = ~pal(tmp$n), fill = TRUE, label = ~paste0("Count: ", tmp$n)) %>% addCircleMarkers(lat=tmp2$lat_subarea, lng=tmp2$long_subarea, fill=TRUE, col="red")
 
 
 ```
 
+#show those building with same coordinates
+```{r}
+tt<-train %>% group_by(lat_lon) %>% summarize(n=n()) %>% right_join(train,by="lat_lon")
+
+tt %>% filter(n==976) %>% View()
+
+```
 
