@@ -1,0 +1,226 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+require(Matrix)
+require(xgboost)
+require(data.table)
+require(dplyr)
+require(ggplot2)
+require(stringr)
+train <- fread("../input/train.csv", sep=",", na.strings = "NA")
+test <- fread("../input/test.csv", sep=",", na.strings = "NA")
+train_lat_lon <- fread('../input/train_lat_lon.csv')
+test_lat_lon <- fread('../input/test_lat_lon.csv')
+
+train <- train %>% left_join(select(train_lat_lon,lat,lon,id), by="id")
+test <- test %>% left_join(select(test_lat_lon,lat,lon,id), by="id")
+
+knn_train <- fread('../input/predictions_knn_train.csv')
+knn_test <- fread('../input/predictions_knn_test.csv')
+
+re_investment = 
+  train %>% 
+  filter(product_type=='Investment',timestamp>='2011-10-01') %>% 
+  group_by(ts=substring(timestamp,1,7)) %>% 
+  summarise(n=n(),
+            n1M=sum(ifelse(price_doc<=1000000,1,0))/n(),
+            n2M=sum(ifelse(price_doc==2000000,1,0))/n(),
+            n3M=sum(ifelse(price_doc==3000000,1,0))/n())
+
+m1=floor(mean(re_investment$n1M[re_investment$ts>='2015-01'])/10*nrow(train)) #undersampling by magic numbers
+m2=floor(mean(re_investment$n2M[re_investment$ts>='2015-01'])/3*nrow(train)) #undersampling by magic numbers
+m3=floor(mean(re_investment$n3M[re_investment$ts>='2015-01'])/2*nrow(train)) 
+
+set.seed(1)
+i1 = train %>% filter(price_doc<=1000000,product_type=='Investment') %>% sample_n(m1)
+i2 = train %>% filter(price_doc==2000000,product_type=='Investment') %>% sample_n(m2)
+i3 = train %>% filter(price_doc==3000000,product_type=='Investment') %>% sample_n(m3)
+
+train = train %>% filter(!(price_doc<=1000000 & product_type=='Investment'))
+train = train %>% filter(!(price_doc==2000000 & product_type=='Investment'))
+train = train %>% filter(!(price_doc==3000000 & product_type=='Investment'))
+
+train = rbind(train,i1,i2,i3) %>% arrange(id)
+
+```
+
+## add knn predictions
+
+```{r}
+train <- train %>% left_join(select(knn_train,id,knn),by="id")
+test <- test %>% left_join(select(knn_test,id,knn),by="id")
+
+```
+
+
+## Full square
+```{r}
+
+train <- train %>% mutate(full_sq = ifelse(full_sq > 1000, full_sq/100, full_sq))
+train <- train %>% mutate(full_sq = ifelse(full_sq > 100 & product_type=="OwnerOccupier" & num_room <= 2, full_sq/10, full_sq))
+train <- train %>% mutate(full_sq = ifelse(full_sq > 300 & product_type=="Investment", full_sq/10, full_sq))
+
+test <- test %>% mutate(full_sq = ifelse(full_sq > 300 & product_type=="OwnerOccupier" & num_room <= 2, full_sq/10, full_sq))
+
+train <- train %>% mutate(strange_full_sq = ifelse(full_sq <= 9, full_sq+1,0), full_sq = ifelse(full_sq <= 9, NA, full_sq))
+
+test <- test %>% mutate(strange_full_sq = ifelse(full_sq <= 9, full_sq+1,0), full_sq = ifelse(full_sq <= 9, NA, full_sq))
+```
+
+## Living area 
+```{r}
+
+train <- train %>% mutate(life_sq = ifelse(life_sq > 1000, life_sq/100, life_sq))
+train <- train %>% mutate(life_sq = ifelse(life_sq/10==full_sq, life_sq/10, life_sq))
+train <- train %>% mutate(life_sq = ifelse((full_sq >0 & life_sq/full_sq > 4), life_sq/10, life_sq))
+
+test <- test %>% mutate(life_sq = ifelse(life_sq/10==full_sq, life_sq/10, life_sq))
+test <- test %>% mutate(life_sq = ifelse((full_sq >0 & life_sq/full_sq > 4), life_sq/10, life_sq))
+
+### swapped vlaues between life and full_sq
+train[train$life_sq>train$full_sq & !(is.na(train$life_sq) | is.na(train$full_sq)),c("full_sq","life_sq")]<- train[train$life_sq>train$full_sq & !(is.na(train$life_sq) | is.na(train$full_sq)),c("life_sq","full_sq")]
+
+test[test$life_sq>test$full_sq & !(is.na(test$life_sq) | is.na(test$full_sq)),c("full_sq","life_sq")]<- test[test$life_sq>test$full_sq & !(is.na(test$life_sq) | is.na(test$full_sq)),c("life_sq","full_sq")]
+
+train <- train %>% mutate(strange_life_sq = ifelse(life_sq < 7, life_sq+1,0), life_sq = ifelse(life_sq <= 1, NA, life_sq))
+
+test <- test %>% mutate(strange_life_sq = ifelse(life_sq <= 1, life_sq+1,0), strange_life_sq= ifelse(is.na(strange_life_sq),0,strange_life_sq), life_sq = ifelse(life_sq <= 1, NA, life_sq))
+
+```
+
+
+
+## Kitchen area 
+```{r}
+
+## build years in kitch_sq
+train <- train %>% mutate(build_year = ifelse(kitch_sq>1900,kitch_sq,build_year))
+test <- test %>% mutate(build_year = ifelse(kitch_sq>1900,kitch_sq,build_year))
+
+## sometimes kitch_sq >= full_sq
+train <- train %>% mutate(kitch_sq = ifelse(kitch_sq >= full_sq, NA, kitch_sq))
+test <- test %>% mutate(kitch_sq = ifelse(kitch_sq >= full_sq, NA, kitch_sq))
+
+### kitch_sq >= life_sq
+train <- train %>% mutate(kitch_sq = ifelse(kitch_sq >= life_sq, NA, kitch_sq))
+test <- test %>% mutate(kitch_sq = ifelse(kitch_sq >= life_sq, NA, kitch_sq))
+
+train <- train %>% mutate(strange_kitch_sq = ifelse(kitch_sq <= 1, kitch_sq+1,0),kitch_sq = ifelse(kitch_sq <= 1, NA, kitch_sq))
+test <- test %>% mutate(strange_kitch_sq = ifelse(kitch_sq <= 1, kitch_sq+1,0),kitch_sq = ifelse(kitch_sq <= 1, NA, kitch_sq))
+
+```
+
+
+
+## Number of living rooms
+```{r}
+train <- train %>% mutate(num_room = ifelse(num_room >= 10 | num_room <= 0, NA, num_room))
+test <- test %>% mutate(num_room = ifelse(num_room >= 10 | num_room <= 0, NA, num_room))
+
+```
+
+
+## build year
+```{r}
+
+train <- train %>% mutate(build_year = ifelse(build_year > 1000000, mean(as.numeric(c(str_sub(build_year,1,4),str_sub(build_year,5,8)))), build_year))
+
+train <- train %>% mutate(build_year = ifelse(build_year > 2900, as.numeric(str_c("1",str_sub(build_year,2,4))), build_year))
+
+train <- train %>% mutate(strange_build_year = ifelse(build_year <= 1, build_year+1,0), build_year = ifelse(build_year < 1800, NA, build_year))
+
+test <- test %>% mutate(strange_build_year = ifelse(build_year <= 1, build_year+1,0), build_year = ifelse(build_year < 1800, NA, build_year))
+
+
+```
+
+
+#### General price level of Sub Areas
+```{r}
+  # average price per raion
+  train <- train %>% 
+    group_by(sub_area) %>% 
+    summarize(mean_price_raion = mean(price_doc)) %>% 
+    right_join(train,by="sub_area")
+  
+  # average price rank per raion
+  train <- train %>% group_by(sub_area) %>% mutate(price_rank_raion = rank(mean_price_raion))
+  test <- train %>% group_by(sub_area) %>% summarize(price_rank_raion = mean(price_rank_raion)) %>% select(sub_area,price_rank_raion) %>% right_join(test, by="sub_area")  
+```
+
+```{r}
+macro <- read.csv("../input/macro.csv")
+sample_submission <- read.csv("../input/sample_submission.csv")
+
+id_test = test$id
+
+y_train <- train$price_doc
+
+x_train <- subset(train, select = -c(id, timestamp, price_doc,mean_price_raion))
+x_test <- subset(test, select = -c(id, timestamp))
+
+
+
+len_train <- nrow(x_train)
+len_test <- nrow(x_test)
+
+train_test <- bind_rows(x_train, x_test)
+
+features <- colnames(train_test)
+
+for (f in features) {
+  if ((class(train_test[[f]])=="factor") || (class(train_test[[f]])=="character")) {
+    #cat("VARIABLE : ",f,"\n")
+    levels <- unique(train_test[[f]])
+    train_test[[f]] <- as.numeric(factor(train_test[[f]], levels=levels))
+  }
+}
+
+x_train = train_test[1:len_train,]
+x_test = train_test[(len_train+1):(len_train+len_test),]
+
+dtrain = xgb.DMatrix(as.matrix(x_train), label=log(y_train+1))
+dtest = xgb.DMatrix(as.matrix(x_test))
+
+xgb_params = list(
+  seed = 0,
+  colsample_bytree = 0.7,
+  subsample = 0.7,
+  eta = 0.05,
+  objective = 'reg:linear',
+  max_depth = 5,
+  num_parallel_tree = 1,
+  min_child_weight = 1,
+  base_score = 15.8123
+)
+
+res = xgb.cv(xgb_params,
+            dtrain,
+            nrounds=2000,
+            nfold=10,
+            early_stopping_rounds=20,
+            print_every_n = 10,
+            verbose= 1,
+            maximize=F)
+
+best_nrounds = res$best_iteration
+#best_nrounds = 145
+
+gbdt = xgb.train(xgb_params, dtrain, best_nrounds)
+
+prediction <- predict(gbdt,dtest)
+sample_submission$price_doc <- exp(prediction)-1
+
+write.csv(sample_submission, "knn_XGB_R_output.csv", row.names = F)
+
+
+imp_matrix_all <- xgb.importance(colnames(dtrain),gbdt)
+
+  ggplot(head(imp_matrix_all,50),aes(x=reorder(Feature,Gain),y=Gain))+geom_bar(stat="identity")+coord_flip(ylim=c(0,0.2))+theme_bw()+labs(x="")
+
+
+```
+

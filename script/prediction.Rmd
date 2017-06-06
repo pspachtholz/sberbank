@@ -8,6 +8,8 @@ output:
     theme: paper
 ---
 
+# todo: price per sqm outliers
+# todo: full_sq na in test set
 
 ### Initialization
 ```{r message=FALSE, warning=FALSE}
@@ -472,6 +474,10 @@ test <- test %>%
   # average price rank per raion
   train <- train %>% group_by(sub_area) %>% mutate(price_rank_raion = rank(mean_price_raion))
   test <- train %>% group_by(sub_area) %>% summarize(price_rank_raion = mean(price_rank_raion)) %>% select(sub_area,price_rank_raion) %>% right_join(test, by="sub_area")  
+  
+    # average price rank per raion >= 2014
+  train <- train %>% filter(year>=2014) %>% group_by(sub_area) %>% mutate(price_rank_raion_new = rank(mean_price_raion))
+  test <- train %>% filter(year>=2014) %>% group_by(sub_area) %>% summarize(price_rank_raion_new = mean(price_rank_raion_new)) %>% select(sub_area,price_rank_raion_new) %>% right_join(test, by="sub_area")  
 ```
 
 #### Poselenie vs rest
@@ -540,11 +546,12 @@ test <- test %>% mutate(poselenie = ifelse(str_detect(sub_area, 'Poselenie'),1,0
 
 ```{r}
 
-mean_prices <- train %>% group_by(year_month) %>% summarize(mean_prices=mean(price_doc))
+mean_prices <- train %>% group_by(year_month,product_type) %>% summarize(mean_prices=mean(price_doc))
 
-train <- train %>% left_join(mean_prices, by=c("year_month"))
+train <- train %>% left_join(mean_prices, by=c("year_month","product_type"))
 
-overall_mean <- train %>% filter(year>=2015) %>%  summarize(overall_mean=mean(price_doc)) %>% .[[1]]
+train <- train %>% filter(between(year,2013,2014)) %>% group_by(product_type) %>%  summarize(overall_mean=mean(price_doc)) %>% right_join(train,by="product_type")
+
 
 train <- train %>% mutate(price_normal = price_doc-mean_prices+overall_mean)
 
@@ -570,7 +577,7 @@ test <- test %>% mutate(product_type = as.factor(product_type))
 ### Feature Importance
 #### Features
 ```{r}
-outcomes <- train %>% filter(strange_price == 0) %>% select(price_normal) %>% .[[1]]
+outcomes <- train %>% filter(strange_price == 0 & price_normal>0) %>% select(price_normal) %>% .[[1]]
 #outcomes <- train %>% select(price_doc) %>% .[[1]]
 
 basic_features <- c("full_sq", "life_sq", "kitch_sq", "num_room", "floor", "max_floor", "material", "build_year", "state", "product_type")
@@ -580,7 +587,7 @@ basic_features <- c("full_sq", "life_sq", "kitch_sq", "num_room", "floor", "max_
 new_features <- c("month_of_year","week_of_year", "day_of_month", "day_of_week", "floor_from_top", "floor_by_maxfloor", "roomsize", "life_proportion", "kitchen_proportion", "extra_area", "age_at_sale", "n_sales_permonth", "distance_from_kremlin", "young_proportion", "work_proportion", "retire_proportion", "mean_building_height", "ratio_preschool",
 "ratio_school", "count_na_perrow", "angle_from_kremlin", "bearing.x", "bearing.y", "bearing.xy", "pop_density_raion", "school_education_centers_raion_pct", "hospital_beds_raion_pct", "healthcare_centers_raion_pct", "sport_objects_raion_pct", "additional_education_raion_pct", "shopping_centers_raion_pct", "okrug")
 
-exclude_features <- c("price_normal","mean_prices", "count_na_perrow", "train_test", "price_doc", "timestamp", "id", "mean_price_raion_year", "mean_price_raion", "mean_price_persqm_raion", "year", "year_month", "sub_area", "appartment_name", "n", "strange_price")
+exclude_features <- c("price_normal","mean_prices", "count_na_perrow", "train_test", "price_doc", "timestamp", "id", "mean_price_raion_year", "mean_price_raion", "mean_price_persqm_raion", "year", "year_month", "sub_area", "appartment_name", "n", "strange_price","overall_mean")
 
 ```
 
@@ -594,7 +601,7 @@ exclude_features <- c("price_normal","mean_prices", "count_na_perrow", "train_te
   predictors <- setdiff(names(train), exclude_features)
 
 
-  train_set <- train %>% filter(strange_price == 0) %>% select(one_of(predictors))
+  train_set <- train %>% filter(strange_price == 0 & price_normal>0) %>% select(one_of(predictors))
 #  train_set <- train %>% select(one_of(predictors))
   
   test_set <- test %>% select(one_of(predictors))
@@ -612,11 +619,12 @@ exclude_features <- c("price_normal","mean_prices", "count_na_perrow", "train_te
   #### xgboost params
   param <- list(objective="reg:linear",
               eval_metric = "rmse",
-              eta = .5,
+              eta = .2,
               max_depth = 4,
-              gamma = 1,
-              subsample = 0.7,
-              colsample_bytree = .7
+              gamma = 6,
+              subsample = .7,
+              colsample_bytree = .7,
+              min_child_weight=4
   )
 
   # CV for number of rounds
@@ -631,6 +639,7 @@ exclude_features <- c("price_normal","mean_prices", "count_na_perrow", "train_te
                   verbose = 1
   )
   rounds <- xgb_cv$best_iteration  
+  rounds<-1000
   
   # Train model
   xgb_model <- xgb.train(data = dtrain,
@@ -650,17 +659,20 @@ What we also see is that the time features (e.g., day of week) don't seem too im
 ```{r, fig.height=10, width=10, echo=FALSE}
   imp_matrix_all <- imp_matrix_all %>% mutate(group = ifelse(Feature %in% new_features,"new","old"))
 
-  ggplot(head(imp_matrix_all,20),aes(x=reorder(Feature,Gain),y=Gain, fill=group))+geom_bar(stat="identity")+coord_flip(ylim=c(0,0.2))+theme_bw()+labs(x="")
+  ggplot(head(imp_matrix_all,50),aes(x=reorder(Feature,Gain),y=Gain, fill=group))+geom_bar(stat="identity")+coord_flip(ylim=c(0,0.2))+theme_bw()+labs(x="")
 ```
 
 ### make prediction
 
 ```{r}
-preds <- data.frame(id=test_id, price_doc = exp(predict(xgb_model,dtest))-1)
+preds <- data.frame(id=test_id, price_doc = exp(predict(xgb_model,dtest))-1, pt=test_set$product_type)
 
 #preds$price_doc <- preds$price_doc / (mean(preds$price_doc)/7110466)
-preds$price_doc <- preds$price_doc * (6600466/mean(train$price_normal))
+#preds$price_doc <- preds$price_doc * (6600466/mean(train$price_normal))
 
+preds$price_doc[preds$pt=="Investment"]<-preds$price_doc[preds$pt=="Investment"]/1.1
+
+preds$pt<-NULL
 write.csv(preds, '../submission.csv', row.names = FALSE, quote = FALSE)
 ```
 
@@ -703,6 +715,7 @@ dtest <- xgb.DMatrix(data = test_sparse)
   param <- list(objective="binary:logistic",
               eval_metric = "auc",
               eta = .05,
+              gamma = 5,
               max_depth = 5,
               subsample = 0.7,
               colsample_bytree = .7

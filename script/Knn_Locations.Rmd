@@ -1,0 +1,63 @@
+---
+title: "Untitled"
+author: "Philipp Spachtholz"
+date: "June 6, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+
+require(Matrix)
+require(xgboost)
+require(data.table)
+require(dplyr)
+require(ggplot2)
+require(stringr)
+library(kknn)
+library(caret)
+train <- fread("../input/train.csv", sep=",", na.strings = "NA")
+test <- fread("../input/test.csv", sep=",", na.strings = "NA")
+train_lat_lon <- fread('../input/train_lat_lon.csv')
+test_lat_lon <- fread('../input/test_lat_lon.csv')
+
+train <- train %>% left_join(select(train_lat_lon,lat,lon,id), by="id")
+test <- test %>% left_join(select(test_lat_lon,lat,lon,id), by="id")
+
+train_lat_lon <- train_lat_lon %>% select(id,lat,lon) %>% arrange(id)
+test_lat_lon <- test_lat_lon %>% select(id,lat,lon) %>% arrange(id)
+
+
+train_lat_lon <- train_lat_lon %>% left_join(select(train,id,price_doc),by="id")
+
+
+
+### fit for train set first
+
+n_folds <- 5
+
+folds <- createFolds(train_lat_lon$price_doc, k = n_folds)
+
+preds <- data.frame(id = train_lat_lon$id, knn = vector(length = nrow(train_lat_lon)))
+for (n in 1:n_folds) {
+  train <- train_lat_lon[-folds[[n]],]
+  test <- train_lat_lon[folds[[n]],]
+  ids <- test$id
+  fit <- kknn(price_doc~lat+lon, train, test, k=10)
+  preds$knn[match(ids,preds$id)] <- fit$fitted.values
+}
+
+write.csv(preds, '../input/predictions_knn_train.csv')
+
+
+### fit for test set
+fit <- kknn(price_doc~lat+lon, train_lat_lon, test_lat_lon, k=10)
+predictions_knn <- data.frame(id=test_lat_lon$id, knn=fit$fitted.values)
+
+write.csv(predictions_knn, '../input/predictions_knn_test.csv')
+
+```
