@@ -47,7 +47,7 @@ for (n in 1:n_folds) {
   train <- train_lat_lon[-folds[[n]],]
   test <- train_lat_lon[folds[[n]],]
   ids <- test$id
-  fit <- kknn(price_doc~lat+lon, train, test, k=10)
+  fit <- kknn(price_doc~lat+lon, train, test, k=20)
   preds$knn[match(ids,preds$id)] <- fit$fitted.values
 }
 
@@ -55,7 +55,7 @@ write.csv(preds, '../input/predictions_knn_train.csv')
 
 
 ### fit for test set
-fit <- kknn(price_doc~lat+lon, train_lat_lon, test_lat_lon, k=10)
+fit <- kknn(price_doc~lat+lon, train_lat_lon, test_lat_lon, k=20)
 predictions_knn <- data.frame(id=test_lat_lon$id, knn=fit$fitted.values)
 
 write.csv(predictions_knn, '../input/predictions_knn_test.csv')
