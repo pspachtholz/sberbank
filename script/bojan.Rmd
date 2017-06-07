@@ -32,65 +32,24 @@ test <- test %>% left_join(select(test_lat_lon,lat,lon,id), by="id")
 
 ```
 
-
-## Full square
+### Grouping appartments together
+Some appartments seem to be in the same building. They have the same sub_area and distance to metro.
 ```{r}
+  # assign a common name to them
+  train <- train %>% mutate(appartment_name = factor(str_c(sub_area,format(metro_km_avto,digits=3))))
+  test <- test %>% mutate(appartment_name = factor(str_c(sub_area,format(metro_km_avto,digits=3))))
+  
+  # get the number of appartments in group
+  train <- train %>% 
+    group_by(appartment_name) %>% 
+    tally() %>% 
+    right_join(train,by="appartment_name")
 
-train <- train %>% mutate(full_sq = ifelse(full_sq > 1000, full_sq/100, full_sq))
-train <- train %>% mutate(full_sq = ifelse(full_sq > 100 & product_type=="OwnerOccupier" & num_room <= 2, full_sq/10, full_sq))
-train <- train %>% mutate(full_sq = ifelse(full_sq > 300 & product_type=="Investment", full_sq/10, full_sq))
-
-test <- test %>% mutate(full_sq = ifelse(full_sq > 300 & product_type=="OwnerOccupier" & num_room <= 2, full_sq/10, full_sq))
-
-train <- train %>% mutate(strange_full_sq = ifelse(full_sq <= 9, full_sq+1,0), full_sq = ifelse(full_sq <= 9, NA, full_sq))
-
-test <- test %>% mutate(strange_full_sq = ifelse(full_sq <= 9, full_sq+1,0), full_sq = ifelse(full_sq <= 9, NA, full_sq))
+  test <- test %>% 
+    group_by(appartment_name) %>% 
+    tally() %>% 
+    right_join(test,by="appartment_name")
 ```
-
-## Living area 
-```{r}
-
-train <- train %>% mutate(life_sq = ifelse(life_sq > 1000, life_sq/100, life_sq))
-train <- train %>% mutate(life_sq = ifelse(life_sq/10==full_sq, life_sq/10, life_sq))
-train <- train %>% mutate(life_sq = ifelse((full_sq >0 & life_sq/full_sq > 4), life_sq/10, life_sq))
-
-test <- test %>% mutate(life_sq = ifelse(life_sq/10==full_sq, life_sq/10, life_sq))
-test <- test %>% mutate(life_sq = ifelse((full_sq >0 & life_sq/full_sq > 4), life_sq/10, life_sq))
-
-### swapped vlaues between life and full_sq
-train[train$life_sq>train$full_sq & !(is.na(train$life_sq) | is.na(train$full_sq)),c("full_sq","life_sq")]<- train[train$life_sq>train$full_sq & !(is.na(train$life_sq) | is.na(train$full_sq)),c("life_sq","full_sq")]
-
-test[test$life_sq>test$full_sq & !(is.na(test$life_sq) | is.na(test$full_sq)),c("full_sq","life_sq")]<- test[test$life_sq>test$full_sq & !(is.na(test$life_sq) | is.na(test$full_sq)),c("life_sq","full_sq")]
-
-train <- train %>% mutate(strange_life_sq = ifelse(life_sq < 7, life_sq+1,0), life_sq = ifelse(life_sq <= 1, NA, life_sq))
-
-test <- test %>% mutate(strange_life_sq = ifelse(life_sq <= 1, life_sq+1,0), strange_life_sq= ifelse(is.na(strange_life_sq),0,strange_life_sq), life_sq = ifelse(life_sq <= 1, NA, life_sq))
-
-```
-
-
-
-## Kitchen area 
-```{r}
-
-## build years in kitch_sq
-train <- train %>% mutate(build_year = ifelse(kitch_sq>1900,kitch_sq,build_year))
-test <- test %>% mutate(build_year = ifelse(kitch_sq>1900,kitch_sq,build_year))
-
-## sometimes kitch_sq >= full_sq
-train <- train %>% mutate(kitch_sq = ifelse(kitch_sq >= full_sq, NA, kitch_sq))
-test <- test %>% mutate(kitch_sq = ifelse(kitch_sq >= full_sq, NA, kitch_sq))
-
-### kitch_sq >= life_sq
-train <- train %>% mutate(kitch_sq = ifelse(kitch_sq >= life_sq, NA, kitch_sq))
-test <- test %>% mutate(kitch_sq = ifelse(kitch_sq >= life_sq, NA, kitch_sq))
-
-train <- train %>% mutate(strange_kitch_sq = ifelse(kitch_sq <= 1, kitch_sq+1,0),kitch_sq = ifelse(kitch_sq <= 1, NA, kitch_sq))
-test <- test %>% mutate(strange_kitch_sq = ifelse(kitch_sq <= 1, kitch_sq+1,0),kitch_sq = ifelse(kitch_sq <= 1, NA, kitch_sq))
-
-```
-
-
 
 ## Number of living rooms
 ```{r}
@@ -114,28 +73,95 @@ test <- test %>% mutate(strange_build_year = ifelse(build_year <= 1, build_year+
 
 ```
 
+
+```{r }
+  # year
+  train <- train %>% 
+    mutate(year = year(timestamp))
+  test <- test %>% 
+    mutate(year = year(timestamp))
+```
+
 #### cleaning
 ```{r}
 train <- train %>% mutate(price_persqm = price_doc/full_sq)
 
-train <- train %>% mutate(full_sq = ifelse(price_persqm> 6e+05, full_sq*10, full_sq))
-train$full_sq[train$id %in% c(8799,10489)] <- train$full_sq[train$id %in% c(8799,10489)]*10
+arrange(train,desc(price_persqm)) %>% select(id,price_persqm, price_doc, full_sq, product_type, year, appartment_name, n, everything()) %>% View()
 
-#arrange(train,desc(price_persqm)) %>% select(price_persqm, price_doc, full_sq, product_type, year, everything()) %>% View()
+train %>% filter(id %in% c(22415,26366)) %>% select(id,price_persqm, price_doc, full_sq, product_type, year, appartment_name, n, everything()) %>% View()
 
-train$price_doc[train$id == 20391] <- train$price_doc[train$id == 20391] + 11000000
-train$price_doc[train$id == 30276] <- train$price_doc[train$id == 30276]*10
-train$price_doc[train$id == 635] <- train$price_doc[train$id == 635]*10
+# 5326
+train$full_sq[train$id %in% c(3530)] <- train$full_sq[train$id %in% c(3530)] / 100
 
-# usd statt euro
-train$price_doc[train$id == 1264] <- 11160000
+# 394, 388, 407, 603, 634
+train$full_sq[train$id %in% c(1613,27796,3599,23718,18344)] <- train$full_sq[train$id %in% c(1613,27796,3599,23718,18344)] / 10
+
+# one strange <- probably 2 flats
+train$full_sq[train$id %in% c(16746)] <- train$full_sq[train$id %in% c(16746)]/2
+train$price_doc[train$id %in% c(16746)] <- train$price_doc[train$id %in% c(16746)]/2
+train$num_room[train$id %in% c(16746)] <- train$num_room[train$id %in% c(16746)]/2
+
+
+train$full_sq2<-NA
+train <- train %>% group_by(appartment_name) %>% mutate(appartment_price = mean(price_doc)) %>% ungroup()
+
+## low full_sq
+errors <- train %>% filter(full_sq <= 6)
+for (i in 1:nrow(errors)) {
+  tmp <- train %>% filter(appartment_name == errors$appartment_name[i], full_sq>10, year==errors$year[i])
+  if (nrow(tmp)>=10) {
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)
+  } else {
+  tmp <- train %>% filter(appartment_name == errors$appartment_name[i], full_sq>10)
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)
+  }
+  errors$full_sq[i] <- round(errors$price_doc[i]/tmp_ppsqm)
+}
+train$full_sq2[match(errors$id,train$id)]<-errors$full_sq
+#train$full_sq[match(errors$id,train$id)]<-errors$full_sq
+
+## high full_sq
+errors <- train %>% filter(full_sq >= 210, product_type=="OwnerOccupier", n>=2)
+for (i in 1:nrow(errors)) {
+  tmp <- train %>% filter(appartment_name == errors$appartment_name[i], full_sq<210, year==errors$year[i])
+  if (nrow(tmp)>=10) {
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)
+  } else {
+  tmp <- train %>% filter(appartment_name == errors$appartment_name[i], full_sq<210)
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)
+  }
+  errors$full_sq[i] <- round(errors$price_doc[i]/tmp_ppsqm)
+}
+train$full_sq2[match(errors$id,train$id)]<-errors$full_sq
+#train$full_sq[match(errors$id,train$id)]<-errors$full_sq
+
+
+### strange price per sqm
+
+train$price_doc2 <- NA
+train <- train %>% mutate(price_persqm = price_doc/full_sq)
+
+errors <- train %>% filter(price_persqm <= 15000, product_type=="OwnerOccupier")
+for (i in 1:nrow(errors)) {
+  tmp <- train %>% filter(appartment_name == errors$appartment_name[i], price_persqm>15000, year==errors$year[i], product_type=="OwnerOccupier")
+  if (nrow(tmp)>=10) {
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)
+  } else if (nrow(tmp)>1) {
+  tmp <- train %>% filter(appartment_name == errors$appartment_name[i], price_persqm>15000, product_type=="OwnerOccupier")
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)
+  } else {
+  tmp <- train %>% filter(str_detect(train$appartment_name,str_c('^',str_split(errors$appartment_name[i],' ')[[1]][1])), product_type=="OwnerOccupier")
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)    
+  }
+  errors$price_doc[i] <- round(tmp_ppsqm*errors$full_sq[i])
+}
+train$price_doc2[match(errors$id,train$id)]<-errors$price_doc
+#train$price_doc[match(errors$id,train$id)]<-errors$price_doc
 
 
 train <- train %>% mutate(price_persqm = price_doc/full_sq)
 
-#arrange(train,price_persqm) %>% select(price_persqm, price_doc, full_sq, product_type, year, everything()) %>% View()
-
-#arrange(train,desc(product_type),price_persqm) %>% select(price_persqm, price_doc, full_sq, product_type, year, everything()) %>% View()
+arrange(train,desc(price_persqm)) %>% select(id,price_persqm, price_doc,price_doc2, full_sq, full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
 
 ```
 
@@ -175,7 +201,7 @@ id_test = test$id
 
 y_train <- train$price_doc
 
-x_train <- subset(train, select = -c(id, timestamp, price_doc, price_persqm))
+x_train <- subset(train, select = -c(id, timestamp, price_doc, price_persqm, price_doc2, full_sq2, appartment_price, year))
 x_test <- subset(test, select = -c(id, timestamp))
 
 
