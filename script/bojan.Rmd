@@ -18,40 +18,17 @@ test_lat_lon <- fread('../input/test_lat_lon.csv')
 train <- train %>% left_join(select(train_lat_lon,lat,lon,id), by="id")
 test <- test %>% left_join(select(test_lat_lon,lat,lon,id), by="id")
 
-knn_train <- fread('../input/predictions_knn_train.csv')
-knn_test <- fread('../input/predictions_knn_test.csv')
+#knn_train <- fread('../input/predictions_knn_train.csv')
+#knn_test <- fread('../input/predictions_knn_test.csv')
 
-re_investment = 
-  train %>% 
-  filter(product_type=='Investment',timestamp>='2011-10-01') %>% 
-  group_by(ts=substring(timestamp,1,7)) %>% 
-  summarise(n=n(),
-            n1M=sum(ifelse(price_doc<=1000000,1,0))/n(),
-            n2M=sum(ifelse(price_doc==2000000,1,0))/n(),
-            n3M=sum(ifelse(price_doc==3000000,1,0))/n())
-
-m1=floor(mean(re_investment$n1M[re_investment$ts>='2015-01'])/10*nrow(train)) #undersampling by magic numbers
-m2=floor(mean(re_investment$n2M[re_investment$ts>='2015-01'])/3*nrow(train)) #undersampling by magic numbers
-m3=floor(mean(re_investment$n3M[re_investment$ts>='2015-01'])/2*nrow(train)) 
-
-set.seed(1)
-i1 = train %>% filter(price_doc<=1000000,product_type=='Investment') %>% sample_n(m1)
-i2 = train %>% filter(price_doc==2000000,product_type=='Investment') %>% sample_n(m2)
-i3 = train %>% filter(price_doc==3000000,product_type=='Investment') %>% sample_n(m3)
-
-train = train %>% filter(!(price_doc<=1000000 & product_type=='Investment'))
-train = train %>% filter(!(price_doc==2000000 & product_type=='Investment'))
-train = train %>% filter(!(price_doc==3000000 & product_type=='Investment'))
-
-train = rbind(train,i1,i2,i3) %>% arrange(id)
 
 ```
 
 ## add knn predictions
 
 ```{r}
-train <- train %>% left_join(select(knn_train,id,knn),by="id")
-test <- test %>% left_join(select(knn_test,id,knn),by="id")
+#train <- train %>% left_join(select(knn_train,id,knn),by="id")
+#test <- test %>% left_join(select(knn_test,id,knn),by="id")
 
 ```
 
@@ -137,18 +114,57 @@ test <- test %>% mutate(strange_build_year = ifelse(build_year <= 1, build_year+
 
 ```
 
-
-#### General price level of Sub Areas
+#### cleaning
 ```{r}
-  # average price per raion
-  train <- train %>% 
-    group_by(sub_area) %>% 
-    summarize(mean_price_raion = mean(price_doc)) %>% 
-    right_join(train,by="sub_area")
-  
-  # average price rank per raion
-  train <- train %>% group_by(sub_area) %>% mutate(price_rank_raion = rank(mean_price_raion))
-  test <- train %>% group_by(sub_area) %>% summarize(price_rank_raion = mean(price_rank_raion)) %>% select(sub_area,price_rank_raion) %>% right_join(test, by="sub_area")  
+train <- train %>% mutate(price_persqm = price_doc/full_sq)
+
+train <- train %>% mutate(full_sq = ifelse(price_persqm> 6e+05, full_sq*10, full_sq))
+train$full_sq[train$id %in% c(8799,10489)] <- train$full_sq[train$id %in% c(8799,10489)]*10
+
+#arrange(train,desc(price_persqm)) %>% select(price_persqm, price_doc, full_sq, product_type, year, everything()) %>% View()
+
+train$price_doc[train$id == 20391] <- train$price_doc[train$id == 20391] + 11000000
+train$price_doc[train$id == 30276] <- train$price_doc[train$id == 30276]*10
+train$price_doc[train$id == 635] <- train$price_doc[train$id == 635]*10
+
+# usd statt euro
+train$price_doc[train$id == 1264] <- 11160000
+
+
+train <- train %>% mutate(price_persqm = price_doc/full_sq)
+
+#arrange(train,price_persqm) %>% select(price_persqm, price_doc, full_sq, product_type, year, everything()) %>% View()
+
+#arrange(train,desc(product_type),price_persqm) %>% select(price_persqm, price_doc, full_sq, product_type, year, everything()) %>% View()
+
+```
+
+
+```{r}
+
+re_investment = 
+  train %>% 
+  filter(product_type=='Investment',timestamp>='2011-10-01') %>% 
+  group_by(ts=substring(timestamp,1,7)) %>% 
+  summarise(n=n(),
+            n1M=sum(ifelse(price_doc<=1000000,1,0))/n(),
+            n2M=sum(ifelse(price_doc==2000000,1,0))/n(),
+            n3M=sum(ifelse(price_doc==3000000,1,0))/n())
+
+m1=floor(mean(re_investment$n1M[re_investment$ts>='2015-01'])/10*nrow(train)) #undersampling by magic numbers
+m2=floor(mean(re_investment$n2M[re_investment$ts>='2015-01'])/3*nrow(train)) #undersampling by magic numbers
+m3=floor(mean(re_investment$n3M[re_investment$ts>='2015-01'])/2*nrow(train)) 
+
+set.seed(1)
+i1 = train %>% filter(price_doc<=1000000,product_type=='Investment') %>% sample_n(m1)
+i2 = train %>% filter(price_doc==2000000,product_type=='Investment') %>% sample_n(m2)
+i3 = train %>% filter(price_doc==3000000,product_type=='Investment') %>% sample_n(m3)
+
+train = train %>% filter(!(price_doc<=1000000 & product_type=='Investment'))
+train = train %>% filter(!(price_doc==2000000 & product_type=='Investment'))
+train = train %>% filter(!(price_doc==3000000 & product_type=='Investment'))
+
+train = rbind(train,i1,i2,i3) %>% arrange(id)
 ```
 
 ```{r}
@@ -159,7 +175,7 @@ id_test = test$id
 
 y_train <- train$price_doc
 
-x_train <- subset(train, select = -c(id, timestamp, price_doc,mean_price_raion))
+x_train <- subset(train, select = -c(id, timestamp, price_doc, price_persqm))
 x_test <- subset(test, select = -c(id, timestamp))
 
 
@@ -214,7 +230,7 @@ gbdt = xgb.train(xgb_params, dtrain, best_nrounds)
 prediction <- predict(gbdt,dtest)
 sample_submission$price_doc <- exp(prediction)-1
 
-write.csv(sample_submission, "knn_XGB_R_output.csv", row.names = F)
+write.csv(sample_submission, "XGB_R_output.csv", row.names = F)
 
 
 imp_matrix_all <- xgb.importance(colnames(dtrain),gbdt)

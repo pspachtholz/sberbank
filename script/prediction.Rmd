@@ -25,6 +25,7 @@ output:
 
   train <- fread('../input/train.csv')
   test <- fread('../input/test.csv')
+  macro <- fread('../input/macro.csv')
   
   test_id <- test$id
   
@@ -41,19 +42,22 @@ train <- train %>% mutate(strange_price = ifelse(price_doc %in% c(990000,999000,
 train <- train %>% filter(price_doc <= 9e07)
 ```
 
-## Full square
-```{r}
+<!-- ## Full square -->
+<!-- ```{r} -->
 
-train <- train %>% mutate(full_sq = ifelse(full_sq > 1000, full_sq/100, full_sq))
-train <- train %>% mutate(full_sq = ifelse(full_sq > 100 & product_type=="OwnerOccupier" & num_room <= 2, full_sq/10, full_sq))
-train <- train %>% mutate(full_sq = ifelse(full_sq > 300 & product_type=="Investment", full_sq/10, full_sq))
+<!-- train <- train %>% mutate(full_sq = ifelse(full_sq > 1000, full_sq/100, full_sq)) -->
+<!-- train <- train %>% mutate(full_sq = ifelse(full_sq > 100 & product_type=="OwnerOccupier" & num_room <= 2, full_sq/10, full_sq)) -->
+<!-- train <- train %>% mutate(full_sq = ifelse(full_sq > 300 & product_type=="Investment", full_sq/10, full_sq)) -->
 
-test <- test %>% mutate(full_sq = ifelse(full_sq > 300 & product_type=="OwnerOccupier" & num_room <= 2, full_sq/10, full_sq))
+<!-- test <- test %>% mutate(full_sq = ifelse(full_sq > 300 & product_type=="OwnerOccupier" & num_room <= 2, full_sq/10, full_sq)) -->
 
-train <- train %>% mutate(strange_full_sq = ifelse(full_sq <= 9, full_sq+1,0), full_sq = ifelse(full_sq <= 9, NA, full_sq))
+<!-- train <- train %>% mutate(strange_full_sq = ifelse(full_sq <= 9, full_sq+1,0), full_sq = ifelse(full_sq <= 9, NA, full_sq)) -->
 
-test <- test %>% mutate(strange_full_sq = ifelse(full_sq <= 9, full_sq+1,0), full_sq = ifelse(full_sq <= 9, NA, full_sq))
-```
+<!-- test <- test %>% mutate(strange_full_sq = ifelse(full_sq <= 9, full_sq+1,0), full_sq = ifelse(full_sq <= 9, NA, full_sq)) -->
+
+
+
+<!-- ``` -->
 
 ## Living area 
 ```{r}
@@ -301,6 +305,10 @@ full %>% ggplot(aes(x=kitch_sq)) + stat_density(geom="line", aes(group=train_tes
     mutate(year = year(timestamp))
   test <- test %>% 
     mutate(year = year(timestamp))
+  
+  # quarter
+  train <- train %>% mutate(quarter = str_c(year, quarter(timestamp),sep="_"))  
+  test <- test %>% mutate(quarter = str_c(year, quarter(timestamp),sep="_"))
 
   # year_month
   train <- train %>% 
@@ -457,27 +465,29 @@ test <- test %>%
   train <- train %>% 
     group_by(sub_area) %>% 
     summarize(mean_price_raion = mean(price_doc)) %>% 
+    mutate(price_rank_raion = rank(mean_price_raion)) %>% 
     right_join(train,by="sub_area")
 
-  # average price per raion per year
-  train <- train %>% 
-    group_by(sub_area, year) %>% 
-    summarize(mean_price_raion_year = mean(price_doc)) %>% 
-    right_join(train,by=c("sub_area","year"))
-  
-  # average price per sqm per raion
-  train <- train %>% 
+ test <- train %>% 
     group_by(sub_area) %>% 
-    summarize(mean_price_persqm_raion = mean(price_doc/full_sq, na.rm=T)) %>% 
+    summarize(mean_price_raion = mean(price_doc)) %>% 
+    mutate(price_rank_raion = rank(mean_price_raion)) %>% 
+    right_join(test,by="sub_area")
+
+  # average price per raion new
+  train <- train %>% 
+    filter(year >= 2014) %>% 
+    group_by(sub_area) %>% 
+    summarize(mean_price_raion_new = mean(price_doc)) %>% 
+    mutate(price_rank_raion_new = rank(mean_price_raion_new)) %>% 
     right_join(train,by="sub_area")
   
-  # average price rank per raion
-  train <- train %>% group_by(sub_area) %>% mutate(price_rank_raion = rank(mean_price_raion))
-  test <- train %>% group_by(sub_area) %>% summarize(price_rank_raion = mean(price_rank_raion)) %>% select(sub_area,price_rank_raion) %>% right_join(test, by="sub_area")  
-  
-    # average price rank per raion >= 2014
-  train <- train %>% filter(year>=2014) %>% group_by(sub_area) %>% mutate(price_rank_raion_new = rank(mean_price_raion))
-  test <- train %>% filter(year>=2014) %>% group_by(sub_area) %>% summarize(price_rank_raion_new = mean(price_rank_raion_new)) %>% select(sub_area,price_rank_raion_new) %>% right_join(test, by="sub_area")  
+  test <- train %>% 
+    filter(year >= 2014) %>% 
+    group_by(sub_area) %>% 
+    summarize(mean_price_raion_new = mean(price_doc)) %>% 
+    mutate(price_rank_raion_new = rank(mean_price_raion_new)) %>%
+    right_join(test,by="sub_area")
 ```
 
 #### Poselenie vs rest
@@ -542,22 +552,64 @@ test <- test %>% mutate(poselenie = ifelse(str_detect(sub_area, 'Poselenie'),1,0
 ```
 
 
-## normalize price_doc
 
+#### cleaning
 ```{r}
+train <- train %>% mutate(price_persqm = price_doc/full_sq)
 
-mean_prices <- train %>% group_by(year_month,product_type) %>% summarize(mean_prices=mean(price_doc))
+train <- train %>% mutate(full_sq = ifelse(price_persqm> 6e+05, full_sq*10, full_sq))
+train$full_sq[train$id %in% c(22415,26366)] <- train$full_sq[train$id %in% c(22415,26366)]*10
+train$full_sq[train$id %in% c(3530,1613)] <- train$full_sq[train$id %in% c(3530,1613)] / 100
 
-train <- train %>% left_join(mean_prices, by=c("year_month","product_type"))
+### full_sq <= 4
+errors <- train %>% filter(full_sq <= 4)
+for (i in 1:nrow(errors)) {
+  tmp <- train %>% filter(appartment_name == errors$appartment_name[i], full_sq>10, year==errors$year[i])
+  if (nrow(tmp)>=10) {
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)
+  } else {
+  tmp <- train %>% filter(appartment_name == errors$appartment_name[i], full_sq>10)
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)
+  }
+  errors$full_sq[i] <- round(errors$price_doc[i]/tmp_ppsqm)
+}
+train$full_sq[match(errors$id,train$id)]<-errors$full_sq
 
-train <- train %>% filter(between(year,2013,2014)) %>% group_by(product_type) %>%  summarize(overall_mean=mean(price_doc)) %>% right_join(train,by="product_type")
+### achtung. 16746
+errors <- train %>% filter(full_sq >= 200, product_type=="OwnerOccupier", n>=5)
+for (i in 1:nrow(errors)) {
+  tmp <- train %>% filter(appartment_name == errors$appartment_name[i], full_sq<200, year==errors$year[i])
+  if (nrow(tmp)>=10) {
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)
+  } else {
+  tmp <- train %>% filter(appartment_name == errors$appartment_name[i], full_sq<200)
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)
+  }
+  errors$full_sq[i] <- round(errors$price_doc[i]/tmp_ppsqm)
+}
+train$full_sq[match(errors$id,train$id)]<-errors$full_sq
 
 
-train <- train %>% mutate(price_normal = price_doc-mean_prices+overall_mean)
+
+arrange(train,desc(price_persqm)) %>% select(id,price_persqm, price_doc, full_sq, product_type, year, everything()) %>% View()
+
+train$price_doc[train$id == 20391] <- train$price_doc[train$id == 20391] + 11000000
+train$price_doc[train$id == 30276] <- train$price_doc[train$id == 30276]*10
+train$price_doc[train$id == 635] <- train$price_doc[train$id == 635]*10
+
+# usd statt euro
+train$price_doc[train$id == 1264] <- 11160000
+
+
+train <- train %>% mutate(price_persqm = price_doc/full_sq)
+
+arrange(train,price_persqm) %>% select(id,price_persqm, price_doc, full_sq, product_type, year, everything()) %>% View()
+
+arrange(train,desc(product_type),price_persqm) %>% select(id,price_persqm, price_doc, full_sq, product_type, year, everything()) %>% View()
+
+train %>% filter(appartment_name=='Obruchevskoe 2.07060') %>%  select(id,price_persqm, price_doc, full_sq, product_type, year, everything())%>% View()
 
 ```
-
-
 
 #### Fix missing product_type in test set
 
@@ -573,6 +625,74 @@ test <- test %>% mutate(product_type = as.factor(product_type))
 
 ```
 
+## macro
+
+```{r}
+macro <- macro %>% mutate(quarter = str_c(year(timestamp),quarter(timestamp),sep="_"))
+tmp1 <- macro %>% group_by(quarter) %>% summarize(m1=mean(cpi)) %>% mutate(m2=lag(m1), change_cpi=(m1-m2)/m2)
+
+tmp2 <- train %>% filter(product_type=="OwnerOccupier") %>% group_by(quarter) %>% summarize(m1=mean(price_doc)) %>% mutate(m2=lag(m1), change_price=(m1-m2)/m2)
+
+tmp2 %>% left_join(tmp1, by="quarter") %>% mutate(change = change_price-change_cpi) %>% View()
+
+```
+
+
+
+## undersample strange prices
+
+```{r}
+re_investment = 
+  train %>% 
+  filter(product_type=='Investment',timestamp>='2011-10-01') %>% 
+  group_by(ts=substring(timestamp,1,7)) %>% 
+  summarise(n=n(),
+            n1M=sum(ifelse(price_doc<=1000000,1,0))/n(),
+            n2M=sum(ifelse(price_doc==2000000,1,0))/n(),
+            n3M=sum(ifelse(price_doc==3000000,1,0))/n())
+
+m1=floor(mean(re_investment$n1M[re_investment$ts>='2015-01'])/10*nrow(train)) #undersampling by magic numbers
+m2=floor(mean(re_investment$n2M[re_investment$ts>='2015-01'])/3*nrow(train)) #undersampling by magic numbers
+m3=floor(mean(re_investment$n3M[re_investment$ts>='2015-01'])/2*nrow(train)) 
+
+set.seed(1)
+i1 = train %>% filter(price_doc<=1000000,product_type=='Investment') %>% sample_n(m1)
+i2 = train %>% filter(price_doc==2000000,product_type=='Investment') %>% sample_n(m2)
+i3 = train %>% filter(price_doc==3000000,product_type=='Investment') %>% sample_n(m3)
+
+train = train %>% filter(!(price_doc<=1000000 & product_type=='Investment'))
+train = train %>% filter(!(price_doc==2000000 & product_type=='Investment'))
+train = train %>% filter(!(price_doc==3000000 & product_type=='Investment'))
+
+train = rbind(train,i1,i2,i3) %>% arrange(id)
+```
+
+## normalize price_doc
+
+```{r}
+
+mean_prices <- train %>% group_by(year_month,product_type) %>% summarize(mean_prices=mean(price_doc))
+
+train <- train %>% left_join(mean_prices, by=c("year_month","product_type"))
+
+train <- train %>% filter(between(year,2013,2014)) %>% group_by(product_type) %>%  summarize(overall_mean=mean(price_doc)) %>% right_join(train,by="product_type")
+
+train <- train %>% mutate(price_normal = price_doc-mean_prices+overall_mean)
+
+train %>%  ggplot(aes(x=price_doc, group=factor(year),color=factor(year)))+geom_density()+coord_cartesian(xlim=c(0,2e07))+facet_grid(product_type~.)
+
+train %>%  ggplot(aes(x=price_normal,group=factor(year),color=factor(year)))+geom_density()+coord_cartesian(xlim=c(0,2e07))+facet_grid(product_type~.)
+
+
+
+train %>%  ggplot(aes(x=log(price_doc+1), group=factor(year),color=factor(year)))+geom_density()+coord_cartesian(xlim=c(14,17.5))+facet_grid(product_type~.)
+
+train %>%  ggplot(aes(x=log(price_normal+1),group=factor(year),color=factor(year)))+geom_density()+coord_cartesian(xlim=c(14,17.5))+facet_grid(product_type~.)
+
+```
+
+
+
 
 ### Feature Importance
 #### Features
@@ -587,11 +707,9 @@ basic_features <- c("full_sq", "life_sq", "kitch_sq", "num_room", "floor", "max_
 new_features <- c("month_of_year","week_of_year", "day_of_month", "day_of_week", "floor_from_top", "floor_by_maxfloor", "roomsize", "life_proportion", "kitchen_proportion", "extra_area", "age_at_sale", "n_sales_permonth", "distance_from_kremlin", "young_proportion", "work_proportion", "retire_proportion", "mean_building_height", "ratio_preschool",
 "ratio_school", "count_na_perrow", "angle_from_kremlin", "bearing.x", "bearing.y", "bearing.xy", "pop_density_raion", "school_education_centers_raion_pct", "hospital_beds_raion_pct", "healthcare_centers_raion_pct", "sport_objects_raion_pct", "additional_education_raion_pct", "shopping_centers_raion_pct", "okrug")
 
-exclude_features <- c("price_normal","mean_prices", "count_na_perrow", "train_test", "price_doc", "timestamp", "id", "mean_price_raion_year", "mean_price_raion", "mean_price_persqm_raion", "year", "year_month", "sub_area", "appartment_name", "n", "strange_price","overall_mean")
+exclude_features <- c("price_normal","mean_prices", "count_na_perrow", "train_test", "price_doc", "timestamp", "id", "mean_price_raion_year", "mean_price_raion", "mean_price_raion_new", "mean_price_persqm_raion", "year", "year_month", "sub_area", "appartment_name", "n", "strange_price","overall_mean")
 
 ```
-
-
 
 
 ## Importance Analysis
@@ -600,8 +718,7 @@ exclude_features <- c("price_normal","mean_prices", "count_na_perrow", "train_te
   #predictors <- basic_features
   predictors <- setdiff(names(train), exclude_features)
 
-
-  train_set <- train %>% filter(strange_price == 0 & price_normal>0) %>% select(one_of(predictors))
+  train_set <- train %>% filter(price_normal>0) %>% select(one_of(predictors))
 #  train_set <- train %>% select(one_of(predictors))
   
   test_set <- test %>% select(one_of(predictors))
@@ -639,7 +756,7 @@ exclude_features <- c("price_normal","mean_prices", "count_na_perrow", "train_te
                   verbose = 1
   )
   rounds <- xgb_cv$best_iteration  
-  rounds<-1000
+  #rounds<-1000
   
   # Train model
   xgb_model <- xgb.train(data = dtrain,
