@@ -246,7 +246,8 @@ res = xgb.cv(xgb_params,
             early_stopping_rounds=20,
             print_every_n = 10,
             verbose= 1,
-            maximize=F)
+            maximize=F,
+            prediction=TRUE)
 
 best_nrounds = res$best_iteration
 #best_nrounds = 145
