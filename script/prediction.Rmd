@@ -557,10 +557,13 @@ test <- test %>% mutate(poselenie = ifelse(str_detect(sub_area, 'Poselenie'),1,0
 ```{r}
 train <- train %>% mutate(price_persqm = price_doc/full_sq)
 
-train <- train %>% mutate(full_sq = ifelse(price_persqm> 6e+05, full_sq*10, full_sq))
+# 4.7 and 6.4
 train$full_sq[train$id %in% c(22415,26366)] <- train$full_sq[train$id %in% c(22415,26366)]*10
+
+# 5326 and 394
 train$full_sq[train$id %in% c(3530,1613)] <- train$full_sq[train$id %in% c(3530,1613)] / 100
 
+train$full_sq2<-NA
 ### full_sq <= 4
 errors <- train %>% filter(full_sq <= 4)
 for (i in 1:nrow(errors)) {
@@ -573,7 +576,7 @@ for (i in 1:nrow(errors)) {
   }
   errors$full_sq[i] <- round(errors$price_doc[i]/tmp_ppsqm)
 }
-train$full_sq[match(errors$id,train$id)]<-errors$full_sq
+train$full_sq2[match(errors$id,train$id)]<-errors$full_sq
 
 ### achtung. 16746
 errors <- train %>% filter(full_sq >= 200, product_type=="OwnerOccupier", n>=5)
@@ -587,7 +590,7 @@ for (i in 1:nrow(errors)) {
   }
   errors$full_sq[i] <- round(errors$price_doc[i]/tmp_ppsqm)
 }
-train$full_sq[match(errors$id,train$id)]<-errors$full_sq
+train$full_sq2[match(errors$id,train$id)]<-errors$full_sq
 
 
 
