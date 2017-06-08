@@ -205,7 +205,9 @@ arrange(train,desc(price_persqm)) %>% select(id,price_persqm, price_doc,price_do
 ```{r}
 train %>% ggplot(aes(x=year, y=full_sq))+geom_line(stat="summary", color="red")+geom_point(stat="summary", size=3, color="red")
 
-train <- train %>% group_by(year) %>% mutate(full_norm = full_sq/mean(full_sq))
+train <- train %>% group_by(year) %>% mutate(full_norm = full_sq-mean(full_sq))
+
+data.frame(t(sort(cor(train[sapply(train, is.numeric)])[,"year"],decreasing=T))) %>% gather() %>% ggplot(aes(x=reorder(key,value),y=value))+geom_bar(stat="identity")+coord_flip()
 
 ```
 
