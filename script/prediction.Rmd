@@ -557,21 +557,24 @@ test <- test %>% mutate(poselenie = ifelse(str_detect(sub_area, 'Poselenie'),1,0
 ```{r}
 train <- train %>% mutate(price_persqm = price_doc/full_sq)
 
-arrange(train,desc(price_persqm)) %>% select(id,price_persqm, price_doc, full_sq, product_type, year, appartment_name, n, everything()) %>% View()
+#arrange(train,desc(price_persqm)) %>% select(id,price_persqm, price_doc, full_sq, product_type, year, appartment_name, n, everything()) %>% View()
 
-train %>% filter(id %in% c(22415,26366)) %>% select(id,price_persqm, price_doc, full_sq, product_type, year, appartment_name, n, everything()) %>% View()
+#train %>% filter(id %in% c(22415,26366)) %>% select(id,price_persqm, price_doc, full_sq, product_type, year, appartment_name, n, everything()) %>% View()
 
 # 5326
 train$full_sq[train$id %in% c(3530)] <- train$full_sq[train$id %in% c(3530)] / 100
 
-# 394, 388, 407, 603, 634
-train$full_sq[train$id %in% c(1613,27796,3599,23718,18344)] <- train$full_sq[train$id %in% c(1613,27796,3599,23718,18344)] / 10
+# 394, 388, 407, 603, 634, 412, 461, 325, 353, 729, 635
+train$full_sq[train$id %in% c(1613,27796,3599,23718,18344,2428,7210,129,1481,2783,5947)] <- train$full_sq[train$id %in% c(1613,27796,3599,23718,18344,2428,7210,129,1481,2783,5947)] / 10
 
 # one strange <- probably 2 flats
 train$full_sq[train$id %in% c(16746)] <- train$full_sq[train$id %in% c(16746)]/2
 train$price_doc[train$id %in% c(16746)] <- train$price_doc[train$id %in% c(16746)]/2
 train$num_room[train$id %in% c(16746)] <- train$num_room[train$id %in% c(16746)]/2
 
+# swapped life_sq and full_sq and error in life_sq
+train$full_sq[train$id == 1189]<-44
+train$life_sq[train$id == 1189]<-29
 
 train$full_sq2<-NA
 train <- train %>% group_by(appartment_name) %>% mutate(appartment_price = mean(price_doc)) %>% ungroup()
@@ -589,7 +592,7 @@ for (i in 1:nrow(errors)) {
   errors$full_sq[i] <- round(errors$price_doc[i]/tmp_ppsqm)
 }
 train$full_sq2[match(errors$id,train$id)]<-errors$full_sq
-#train$full_sq[match(errors$id,train$id)]<-errors$full_sq
+train$full_sq[match(errors$id,train$id)]<-errors$full_sq
 
 ## high full_sq
 errors <- train %>% filter(full_sq >= 210, product_type=="OwnerOccupier", n>=2)
@@ -604,7 +607,7 @@ for (i in 1:nrow(errors)) {
   errors$full_sq[i] <- round(errors$price_doc[i]/tmp_ppsqm)
 }
 train$full_sq2[match(errors$id,train$id)]<-errors$full_sq
-#train$full_sq[match(errors$id,train$id)]<-errors$full_sq
+train$full_sq[match(errors$id,train$id)]<-errors$full_sq
 
 
 ### strange price per sqm
@@ -627,18 +630,50 @@ for (i in 1:nrow(errors)) {
   errors$price_doc[i] <- round(tmp_ppsqm*errors$full_sq[i])
 }
 train$price_doc2[match(errors$id,train$id)]<-errors$price_doc
-#train$price_doc[match(errors$id,train$id)]<-errors$price_doc
+train$price_doc[match(errors$id,train$id)]<-errors$price_doc
 
+train$price_doc[train$id==2121]<-train$price_doc[train$id==2121]/10
 
 train <- train %>% mutate(price_persqm = price_doc/full_sq)
 
+# life_sq 37.8 full_sq 0 
+test$full_sq[test$id == 30938] <- test$life_sq[test$id == 30938]
+# other in same building with 3 rooms and 41 life_sq
+test$full_sq[test$id == 35857] <- 78
+# swapped life_sq and full_sq
+test$full_sq[test$id == 33278] <- 33.8
+test$life_sq[test$id == 33278] <- 14.8
+# 403.0 instead of 40.3
+test$full_sq[test$id == 35108] <- test$full_sq[test$id == 35108]/10
 
+
+### train full_sq < life_sq
+
+# 7478 -> 76
+train$life_sq[train$id==13549]<-76
+
+# full 82 life 802
+train$life_sq[train$id==9649]<-82
+
+train$life_sq[train$id==1866]<-18
+train$life_sq[train$id==22788]<-63.7
+
+train <- train %>% mutate(life_sq=ifelse(life_sq/3>full_sq,life_sq/10, life_sq))
+
+### test full_sq < life_sq
+test <- test %>% mutate(life_sq2=ifelse(life_sq/3>full_sq,life_sq/10, NA))
+
+
+arrange(train,desc(price_persqm)) %>% select(id,price_persqm, price_doc,price_doc2, full_sq, life_sq, life_sq2, kitch_sq, num_room, full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
 
 tmp %>% select(id,price_persqm, price_doc, full_sq, full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
 
 errors %>% select(id,price_persqm, price_doc, full_sq, full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
 
-arrange(train,desc(price_persqm)) %>% select(id,price_persqm, price_doc,price_doc2, full_sq, full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
+train %>% arrange(desc(price_persqm)) %>% select(id,price_persqm, price_doc,price_doc2, full_sq, full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
+
+test %>% arrange(desc(life_sq)) %>% select(id,full_sq, life_sq,life_sq2,kitch_sq, num_room, product_type, year, appartment_name, n, everything()) %>% View()
+
 
 train %>% filter(!is.na(full_sq2)) %>% select(id,price_persqm, price_doc, full_sq, full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
 
@@ -648,9 +683,12 @@ arrange(train,price_persqm) %>% select(id,price_persqm, price_doc, full_sq, prod
 
 arrange(train,desc(product_type),price_persqm) %>% select(id,price_persqm, price_doc, full_sq, product_type, year, everything()) %>% View()
 
-train %>% filter(appartment_name=='Poselenie Shherbinka 7.45217') %>%  select(id,price_persqm, price_doc, full_sq, full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
+train %>% filter(str_detect(appartment_name,'Teplyj Stan')) %>% select(id,price_persqm, price_doc,price_doc2, full_sq, life_sq, kitch_sq,num_room,full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
 
-test %>% filter(appartment_name=='Poselenie Shherbinka 7.45217') %>%  select(id, full_sq,  product_type, year, appartment_name, n, everything()) %>% View()
+train %>% filter(full_sq*3<life_sq) %>% select(id,price_persqm, price_doc,price_doc2, full_sq, life_sq, life_sq2, kitch_sq,num_room,full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
+
+
+test %>% filter(appartment_name=='Horoshevo-Mnevniki 1.28305') %>%  select(id, full_sq, life_sq,life_sq2, kitch_sq,num_room, product_type, year, appartment_name, n, everything()) %>% View()
 
 ```
 

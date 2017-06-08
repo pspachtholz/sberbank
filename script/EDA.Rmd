@@ -298,6 +298,14 @@ ggplot(train,aes(x=num_room,y=price_doc))+
 ```
 
 
+### Do houses get bigger over time?
+
+```{r, message=F, warning=F}
+train %>% ggplot(aes(x=year, y=full_sq))+geom_line(stat="summary", color="red")+geom_point(stat="summary", size=3, color="red")
+
+train %>% filter(build_year>1960) %>% ggplot(aes(x=build_year, y=full_sq))+geom_line(stat="summary", color="red")+geom_point(stat="summary", size=3, color="red")
+
+```
 
 
 ### Build Year {.tabset #buildyear}
