@@ -488,6 +488,8 @@ Data quality is getting better for the test set. For many variables there are fe
 ```{r, warning=FALSE, message=FALSE}
 train <- train %>% mutate(train_test = "train")
 test <- test %>% mutate(train_test = "test")
+test$year_month <- make_date(year=year(test$timestamp),month=month(test$timestamp))
+
 full <- bind_rows(train,test)
 
 basic_features <- c("full_sq", "life_sq", "kitch_sq", "num_room", "floor", "max_floor", "material", "build_year", "state", "product_type")
@@ -513,5 +515,17 @@ full %>% filter(life_sq <= 100) %>% ggplot(aes(x=life_sq)) + stat_density(geom="
 
 full %>% filter(kitch_sq <= 25) %>% ggplot(aes(x=kitch_sq)) + stat_density(geom="line",position="identity", aes(group=train_test,color=train_test),size=1.2,na.rm=T)+facet_grid(product_type~.)+theme_bw()
 ```
+
+
+```{r}
+full %>% group_by(year_month) %>% ggplot(aes(x=year_month, y=full_sq))+geom_point(stat="summary")+geom_smooth()
+
+full %>% group_by(year_month) %>% ggplot(aes(x=year_month, y=cafe_count_3000))+geom_point(stat="summary")+geom_smooth()
+
+full %>% ggplot(aes(year_month))+geom_line(stat="density")
+
+full %>% group_by(year_month) %>% ggplot(aes(x=year_month, y=hospice_morgue_km))+geom_point(stat="summary")+geom_smooth()
+```
+
 
 

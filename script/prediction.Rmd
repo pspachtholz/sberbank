@@ -664,7 +664,7 @@ train <- train %>% mutate(life_sq=ifelse(life_sq/3>full_sq,life_sq/10, life_sq))
 test <- test %>% mutate(life_sq2=ifelse(life_sq/3>full_sq,life_sq/10, NA))
 
 
-arrange(train,desc(price_persqm)) %>% select(id,price_persqm, price_doc,price_doc2, full_sq, life_sq, life_sq2, kitch_sq, num_room, full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
+arrange(train,desc(price_persqm)) %>% select(id,price_persqm, price_doc,price_doc2, full_sq, life_sq, kitch_sq, num_room, full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
 
 tmp %>% select(id,price_persqm, price_doc, full_sq, full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
 
@@ -683,12 +683,12 @@ arrange(train,price_persqm) %>% select(id,price_persqm, price_doc, full_sq, prod
 
 arrange(train,desc(product_type),price_persqm) %>% select(id,price_persqm, price_doc, full_sq, product_type, year, everything()) %>% View()
 
-train %>% filter(str_detect(appartment_name,'Teplyj Stan')) %>% select(id,price_persqm, price_doc,price_doc2, full_sq, life_sq, kitch_sq,num_room,full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
+train %>% filter(str_detect(appartment_name,'Jakimanka 0.78573')) %>% select(id,price_persqm, price_doc,price_doc2, full_sq, life_sq, kitch_sq,num_room,full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
 
 train %>% filter(full_sq*3<life_sq) %>% select(id,price_persqm, price_doc,price_doc2, full_sq, life_sq, life_sq2, kitch_sq,num_room,full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
 
 
-test %>% filter(appartment_name=='Horoshevo-Mnevniki 1.28305') %>%  select(id, full_sq, life_sq,life_sq2, kitch_sq,num_room, product_type, year, appartment_name, n, everything()) %>% View()
+test %>% filter(appartment_name=='Troickij okrug19.08786') %>%  select(id, full_sq, life_sq,life_sq2, kitch_sq,num_room, product_type, year, appartment_name, n, everything()) %>% View()
 
 ```
 
