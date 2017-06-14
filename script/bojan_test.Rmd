@@ -234,9 +234,9 @@ re_investment =
             n2M=sum(ifelse(price_doc==2000000,1,0))/n(),
             n3M=sum(ifelse(price_doc==3000000,1,0))/n())
 
-m1=floor(mean(re_investment$n1M[re_investment$ts>='2015-01'])*nrow(filter(train, product_type=='Investment',timestamp>='2011-10-01'))) #undersampling by magic numbers
-m2=floor(mean(re_investment$n2M[re_investment$ts>='2015-01'])/1.2*nrow(filter(train, product_type=='Investment',timestamp>='2011-10-01'))) #undersampling by magic numbers
-m3=floor(mean(re_investment$n3M[re_investment$ts>='2015-01'])/1.3*nrow(filter(train, product_type=='Investment',timestamp>='2011-10-01')))
+m1=floor(mean(re_investment$n1M[re_investment$ts>='2015-01'])/10*nrow(filter(train, product_type=='Investment',timestamp>='2011-10-01'))) #undersampling by magic numbers
+m2=floor(mean(re_investment$n2M[re_investment$ts>='2015-01'])/3*nrow(filter(train, product_type=='Investment',timestamp>='2011-10-01'))) #undersampling by magic numbers
+m3=floor(mean(re_investment$n3M[re_investment$ts>='2015-01'])/2*nrow(filter(train, product_type=='Investment',timestamp>='2011-10-01')))
 
 train<-train %>% ungroup()
 
@@ -267,27 +267,19 @@ test <- test %>% mutate(product_type = as.factor(product_type))
 
 ```{r}
 
-test <- test %>% arrange(year)
-
-test$year <- 2013
 macro <- read.csv("../input/macro.csv")
-
 macro <- macro %>% mutate(year_quarter = str_c(year(timestamp),quarter(timestamp),sep="_"))  
 
+
 sample_submission <- read.csv("../input/sample_submission.csv")
-
 id_test = test$id
-
 y_train <- train$price_doc
 
 
-
-tmp <- macro %>% group_by(year_quarter) %>% summarize(m_rent_price1=mean(rent_price_1room_eco),m_rent_price2=mean(rent_price_2room_eco),m_rent_price3=mean(rent_price_3room_eco)) %>% mutate(year_quarter=as.numeric(factor(year_quarter))-6) %>% filter(year_quarter>=1)
-
 train$product_type <- as.factor(train$product_type)
 
-x_train <- select(train, -c(id, timestamp, price_doc, price_persqm, price_doc2, full_sq2, appartment_price, appartment_name, strange_build_year, n, year, year_month)) 
-x_test <- subset(test, select = -c(id, timestamp, appartment_name, strange_build_year, n, year, year_month, life_sq2))
+x_train <- select(train, -c(id, timestamp, price_doc, price_persqm, price_doc2, full_sq2, appartment_price, appartment_name, strange_build_year, n, year, year_quarter, build_year)) 
+x_test <- subset(test, select = -c(id, timestamp, appartment_name, strange_build_year, n, year, year_quarter, life_sq2, build_year))
 
 
 len_train <- nrow(x_train)
@@ -309,29 +301,38 @@ for (f in features) {
 }
 
 # normalize all features
-train_test <- train_test %>% group_by(product_type, year_quarter) %>% mutate_all(funs(normalized=((.)-mean(.))/sd(.))) %>% select(product_type, year_quarter, contains('normalized')) %>% ungroup()
-
+train_test <- train_test %>% group_by(product_type, year_month) %>% mutate_all(funs(normalized=(.)-mean(.,na.rm=T))) %>% select(product_type, year_month, contains('normalized')) %>% ungroup()
 
 
 x_train = train_test[1:len_train,]
 x_test = train_test[(len_train+1):(len_train+len_test),]
 
 
-#add time features
-x_train <- x_train %>% left_join(tmp, by="year_quarter")
-x_test <- x_test %>% left_join(tmp, by="year_quarter")
-x_train <- x_train %>% select(-year_quarter)
-x_test <- x_test %>% select(-year_quarter)
+# #add time-based features
+# 
+# tmp <- macro %>% group_by(year_quarter) %>% summarize(m_rent_price1=mean(rent_price_1room_eco),m_rent_price2=mean(rent_price_2room_eco),m_rent_price3=mean(rent_price_3room_eco)) %>% mutate(year_quarter=as.numeric(factor(year_quarter))-6) %>% filter(year_quarter>=1)
+# x_train <- x_train %>% left_join(tmp, by="year_quarter")
+# x_test <- x_test %>% left_join(tmp, by="year_quarter")
 
+# remove direct time info
+x_train <- x_train %>% select(-year_month)
+x_test <- x_test %>% select(-year_month)
+
+
+
+### debugging
+basic_features <- str_c(c("full_sq", "life_sq", "num_room"),"_normalized")
+x_train <- x_train %>% select(product_type, one_of(basic_features))
+x_test <- x_test %>% select(product_type, one_of(basic_features))
 
 dtrain = xgb.DMatrix(as.matrix(x_train), label=log(y_train+1))
 dtest = xgb.DMatrix(as.matrix(x_test))
 
 xgb_params = list(
   seed = 0,
-  colsample_bytree = 0.7,
+  colsample_bytree = 1,
   subsample = 1,
-  eta = 0.05,
+  eta = 0.1,
   objective = 'reg:linear',
   max_depth = 5,
   num_parallel_tree = 1,
@@ -343,7 +344,7 @@ res = xgb.cv(xgb_params,
             dtrain,
             nrounds=2000,
             nfold=5,
-            early_stopping_rounds=20,
+            early_stopping_rounds=100,
             print_every_n = 10,
             verbose= 1,
             maximize=F,
@@ -355,7 +356,11 @@ best_nrounds = res$best_iteration
 gbdt = xgb.train(xgb_params, dtrain, best_nrounds)
 
 prediction <- predict(gbdt,dtest)
+
 cat(mean(exp(prediction)-1))
+
+ggplot(data.frame(p=exp(prediction)-1), aes(x=p)) + geom_density()+geom_density(data=train, aes(x=price_doc), color="red")+xlim(c(0,2e+07))
+
 sample_submission$price_doc <- exp(prediction)-1
 
 write.csv(sample_submission, "XGB_R_output.csv", row.names = F)
@@ -365,30 +370,57 @@ imp_matrix_all <- xgb.importance(colnames(dtrain),gbdt)
 
   ggplot(head(imp_matrix_all,50),aes(x=reorder(Feature,Gain),y=Gain))+geom_bar(stat="identity")+coord_flip(ylim=c(0,0.4))+theme_bw()+labs(x="")
 
+train2 <- train %>% bind_cols(data.frame(pred=res$pred)) %>% mutate(set="train")
 
 ```
+
 # Where does model over underfit
-```{r, fig.width=10, fig.height=7}
-train2 <- train %>% bind_cols(data.frame(pred=res$pred))
-train2 %>% ggplot(aes(x=log(price_doc+1),y=pred))+geom_point()+coord_cartesian(xlim=c(12,18.5),ylim=c(12,18.5))+geom_abline(slope=1,intercept=0, color="darkred")+facet_grid(product_type~year)
+```{r, fig.width=10, fig.height=5}
+
+train2 %>% ggplot(aes(x=log(price_doc+1),y=pred))+geom_point()+coord_cartesian(xlim=c(12,18.5),ylim=c(14,18.5))+geom_abline(slope=1,intercept=0, color="darkred")+facet_grid(product_type~year)
+
+train2 %>% ggplot(aes(x=full_sq, y=abs(pred-log(price_doc+1)))) + geom_point(stat="summary", size=2)+stat_smooth()
+
+train2 %>% ggplot(aes(x=life_sq, y=abs(pred-log(price_doc+1)))) + geom_point(stat="summary", size=2)+stat_smooth()
+
+train2 %>% ggplot(aes(x=floor, y=abs(pred-log(price_doc+1)))) + geom_point(stat="summary", size=2)+stat_smooth()
+
+train2 %>% ggplot(aes(x=num_room, y=abs(pred-log(price_doc+1)))) + geom_point(stat="summary", size=2)+stat_smooth()
+
 ```
+
 
 ```{r, fig.width=10, fig.height=7}
-train2 %>% ggplot(aes(x=pred))+stat_density(geom="line", color="darkgreen")+stat_density(aes(x=log(price_doc+1)),geom="line", color="darkred")+facet_grid(product_type~year)
-```
-```{r}
-train2 %>% group_by(product_type, year_quarter) %>% summarize(mean(price_doc),mean(exp(pred)-1))
-
-train2 %>% ggplot(aes(x=as.numeric(year_quarter), y=price_doc, color=product_type))+geom_point()
+train2 %>% ggplot(aes(x=exp(pred)-1))+stat_density(geom="line", color="darkgreen")+facet_grid(product_type~year)+stat_density(aes(x=price_doc),geom="line", color="darkred")+xlim(c(0,1.5e+07))
 ```
 
 ```{r}
-x_test2 <- data.frame(m_rent_price3=seq(range(x_train$m_rent_price3,na.rm=T)[1],range(x_train$m_rent_price3,na.rm=T)[2],by=1))
-dtest = xgb.DMatrix(as.matrix(x_test2))
-prediction <- exp(predict(gbdt,dtest))-1
-plotdf<-data.frame(full=x_test2$m_rent_price3, pred=prediction)
-ggplot(plotdf,aes(x=full,y=pred))+geom_point()
+train2 %>% group_by(product_type, year_month) %>% summarize(mean(price_doc),mean(exp(pred)-1))
+
+train2 %>% ggplot(aes(x=(year_month), y=exp(pred)-1, color=product_type))+geom_line(stat="summary", size=1.5)+theme(axis.text.x = element_text(angle=-45))+geom_line(data=train, aes(x=year_month, y=price_doc, group=product_type), stat="summary", alpha=0.2, size=1)+theme_bw()
+
+train2 %>% ggplot(aes(x=(year), y=exp(pred)-1, color=product_type))+geom_line(stat="summary", size=1.5)+theme(axis.text.x = element_text(angle=-45))+geom_line(data=train, aes(x=year, y=price_doc, group=product_type), stat="summary", alpha=0.2, size=1)+theme_bw()
+
+
+x_train %>% bind_cols(data.frame(pred=res$pred)) %>% ggplot(aes(x=full_sq_normalized,y=pred))+geom_point()+facet_grid(product_type~.)
+
+x_train %>% bind_cols(data.frame(pred=res$pred)) %>% ggplot(aes(x=life_sq_normalized,y=pred))+geom_point()+facet_grid(product_type~.)
+
+
 ```
+
+```{r}
+test2 <- test %>% bind_cols(data.frame(pred=prediction)) %>% mutate(set="test")
+
+full2 <- bind_rows(train2, test2)
+
+ggplot(full2,aes(x=full_sq,y=pred, color=set))+geom_point(stat="summary")+facet_grid(product_type~.)
+ggplot(full2,aes(x=year_month,y=pred, color=set))+geom_point(stat="summary")+facet_grid(product_type~.)
+
+
+```
+# 
+
 
 # plot macro data
 
