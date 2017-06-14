@@ -61,7 +61,7 @@ test <- test %>% mutate(product_type = as.factor(product_type))
 ```{r}
 sample_submission <- read.csv("../input/sample_submission.csv")
 
-sample_submission$price_doc <-(6800000-100000*scale(as.numeric(as.Date(test$timestamp))))
+sample_submission$price_doc <-(6800000-200000*scale(as.numeric(as.Date(test$timestamp))))
 sample_submission$price_doc <-6800000
 
 write.csv(sample_submission, "XGB_R_output.csv", row.names = F)
