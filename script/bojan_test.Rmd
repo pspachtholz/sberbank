@@ -234,9 +234,9 @@ re_investment =
             n2M=sum(ifelse(price_doc==2000000,1,0))/n(),
             n3M=sum(ifelse(price_doc==3000000,1,0))/n())
 
-m1=floor(mean(re_investment$n1M[re_investment$ts>='2015-01'])/8*nrow(train)) #undersampling by magic numbers
-m2=floor(mean(re_investment$n2M[re_investment$ts>='2015-01'])/2*nrow(train)) #undersampling by magic numbers
-m3=floor(mean(re_investment$n3M[re_investment$ts>='2015-01'])/2*nrow(train)) 
+m1=floor(mean(re_investment$n1M[re_investment$ts>='2015-01'])*nrow(filter(train, product_type=='Investment',timestamp>='2011-10-01'))) #undersampling by magic numbers
+m2=floor(mean(re_investment$n2M[re_investment$ts>='2015-01'])/1.2*nrow(filter(train, product_type=='Investment',timestamp>='2011-10-01'))) #undersampling by magic numbers
+m3=floor(mean(re_investment$n3M[re_investment$ts>='2015-01'])/1.3*nrow(filter(train, product_type=='Investment',timestamp>='2011-10-01')))
 
 train<-train %>% ungroup()
 
@@ -271,14 +271,23 @@ test <- test %>% arrange(year)
 
 test$year <- 2013
 macro <- read.csv("../input/macro.csv")
+
+macro <- macro %>% mutate(year_quarter = str_c(year(timestamp),quarter(timestamp),sep="_"))  
+
 sample_submission <- read.csv("../input/sample_submission.csv")
 
 id_test = test$id
 
 y_train <- train$price_doc
 
-x_train <- subset(train, select = -c(id, timestamp, price_doc, price_persqm, price_doc2, full_sq2, appartment_price, appartment_name, strange_build_year, n, year, year_month))
-x_test <- subset(test, select = -c(id, timestamp, appartment_name, strange_build_year, n, year, year_month))
+
+
+tmp <- macro %>% group_by(year_quarter) %>% summarize(m_rent_price1=mean(rent_price_1room_eco),m_rent_price2=mean(rent_price_2room_eco),m_rent_price3=mean(rent_price_3room_eco)) %>% mutate(year_quarter=as.numeric(factor(year_quarter))-6) %>% filter(year_quarter>=1)
+
+train$product_type <- as.factor(train$product_type)
+
+x_train <- select(train, -c(id, timestamp, price_doc, price_persqm, price_doc2, full_sq2, appartment_price, appartment_name, strange_build_year, n, year, year_month)) 
+x_test <- subset(test, select = -c(id, timestamp, appartment_name, strange_build_year, n, year, year_month, life_sq2))
 
 
 len_train <- nrow(x_train)
@@ -307,17 +316,22 @@ train_test <- train_test %>% group_by(product_type, year_quarter) %>% mutate_all
 x_train = train_test[1:len_train,]
 x_test = train_test[(len_train+1):(len_train+len_test),]
 
+
+#add time features
+x_train <- x_train %>% left_join(tmp, by="year_quarter")
+x_test <- x_test %>% left_join(tmp, by="year_quarter")
 x_train <- x_train %>% select(-year_quarter)
 x_test <- x_test %>% select(-year_quarter)
+
 
 dtrain = xgb.DMatrix(as.matrix(x_train), label=log(y_train+1))
 dtest = xgb.DMatrix(as.matrix(x_test))
 
 xgb_params = list(
   seed = 0,
-  colsample_bytree = 1,
+  colsample_bytree = 0.7,
   subsample = 1,
-  eta = 0.025,
+  eta = 0.05,
   objective = 'reg:linear',
   max_depth = 5,
   num_parallel_tree = 1,
@@ -369,24 +383,24 @@ train2 %>% ggplot(aes(x=as.numeric(year_quarter), y=price_doc, color=product_typ
 ```
 
 ```{r}
-x_test2 <- data.frame(full_norm=seq(range(train$full_norm)[1],range(train$full_norm)[2],by=1))
+x_test2 <- data.frame(m_rent_price3=seq(range(x_train$m_rent_price3,na.rm=T)[1],range(x_train$m_rent_price3,na.rm=T)[2],by=1))
 dtest = xgb.DMatrix(as.matrix(x_test2))
 prediction <- exp(predict(gbdt,dtest))-1
-plotdf<-data.frame(full=x_test2$full_norm, pred=prediction)
+plotdf<-data.frame(full=x_test2$m_rent_price3, pred=prediction)
 ggplot(plotdf,aes(x=full,y=pred))+geom_point()
 ```
 
 # plot macro data
 
 ```{r}
-  macro <- macro %>% 
+macro <- macro %>% 
     mutate(year_quarter = str_c(year(timestamp),quarter(timestamp),sep="_"))
 
 ggplot(macro,aes(x=year_quarter,y=oil_urals))+geom_point(stat="summary")+theme(axis.text.x = element_text(angle=-45))+geom_line(stat="summary")
 
+ggplot(macro,aes(x=year_quarter,y=rent_price_1room_eco))+geom_point(stat="summary")+theme(axis.text.x = element_text(angle=-45))+geom_line(stat="summary")
 
 ggplot(macro,aes(x=year_quarter,y=rent_price_2room_eco))+geom_point(stat="summary")+theme(axis.text.x = element_text(angle=-45))+geom_line(stat="summary")
-
 
 ggplot(macro,aes(x=year_quarter,y=rent_price_3room_eco))+geom_point(stat="summary")+theme(axis.text.x = element_text(angle=-45))+geom_line(stat="summary")
 
@@ -397,6 +411,6 @@ train <- train %>% left_join(macro,by="timestamp")
 tmp <- train
 tmp2<-tmp %>% group_by(year_quarter.x) %>% summarize(m1=mean(price_doc),m2=mean(rent_price_3room_eco))
 cor(tmp2$m1,tmp2$m2)
-ggplot(tmp2, aes(x=m1,y=m2))+geom_point()+geom_smooth(method="lm")
+ggplot(tmp2, aes(x=m2,y=m1))+geom_point()+geom_smooth(method="lm")
 ```
 

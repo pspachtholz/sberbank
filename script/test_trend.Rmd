@@ -1,0 +1,67 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+require(Matrix)
+require(xgboost)
+require(data.table)
+require(dplyr)
+require(ggplot2)
+require(stringr)
+library(tidyr)
+library(lubridate)
+train <- fread("../input/train.csv", sep=",", na.strings = "NA")
+test <- fread("../input/test.csv", sep=",", na.strings = "NA")
+train_lat_lon <- fread('../input/train_lat_lon.csv')
+test_lat_lon <- fread('../input/test_lat_lon.csv')
+
+#train <- train %>% left_join(select(train_lat_lon,lat,lon,id), by="id")
+#test <- test %>% left_join(select(test_lat_lon,lat,lon,id), by="id")
+
+#knn_train <- fread('../input/predictions_knn_train.csv')
+#knn_test <- fread('../input/predictions_knn_test.csv')
+
+
+```
+
+```{r }
+  # year
+  train <- train %>% 
+    mutate(year = year(timestamp))
+  test <- test %>% 
+    mutate(year = year(timestamp))
+  
+  # year_month
+  train <- train %>% 
+    mutate(year_month = make_date(year=year(timestamp),month=month(timestamp)))
+  test <- test %>% 
+    mutate(year_month = make_date(year=year(timestamp),month=month(timestamp)))
+  
+  train <- train %>% 
+    mutate(year_quarter = str_c(year(timestamp),quarter(timestamp),sep="_"))
+  
+  test <- test %>% 
+    mutate(year_quarter = str_c(year(timestamp),quarter(timestamp),sep="_"))  
+```
+
+
+```{r}
+test <- test %>% mutate(product_type=as.character(product_type))
+
+test <- test %>% mutate(product_type = ifelse(is.na(product_type) & build_year>2016,"OwnerOccupier",product_type)) # OwnerOccupier
+
+test <- test %>% mutate(product_type = ifelse(is.na(product_type),"Investment",product_type)) # Investment
+
+test <- test %>% mutate(product_type = as.factor(product_type))
+```
+
+
+```{r}
+sample_submission <- read.csv("../input/sample_submission.csv")
+
+sample_submission$price_doc <-(6800000-100000*scale(as.numeric(as.Date(test$timestamp))))
+sample_submission$price_doc <-6800000
+
+write.csv(sample_submission, "XGB_R_output.csv", row.names = F)
