@@ -375,17 +375,17 @@ train2 <- train %>% bind_cols(data.frame(pred=res$pred)) %>% mutate(set="train")
 ```
 
 # Where does model over underfit
-```{r, fig.width=10, fig.height=5}
+```{r, fig.width=7, fig.height=5}
 
 train2 %>% ggplot(aes(x=log(price_doc+1),y=pred))+geom_point()+coord_cartesian(xlim=c(12,18.5),ylim=c(14,18.5))+geom_abline(slope=1,intercept=0, color="darkred")+facet_grid(product_type~year)
 
-train2 %>% ggplot(aes(x=full_sq, y=abs(pred-log(price_doc+1)))) + geom_point(stat="summary", size=2)+stat_smooth()
+train2 %>% ggplot(aes(x=full_sq, y=abs(pred-log(price_doc+1)))) + geom_point(stat="summary", size=2)+stat_smooth()+facet_grid(product_type~.)
 
-train2 %>% ggplot(aes(x=life_sq, y=abs(pred-log(price_doc+1)))) + geom_point(stat="summary", size=2)+stat_smooth()
+train2 %>% ggplot(aes(x=life_sq, y=abs(pred-log(price_doc+1)))) + geom_point(stat="summary", size=2)+stat_smooth()+facet_grid(product_type~.)
 
-train2 %>% ggplot(aes(x=floor, y=abs(pred-log(price_doc+1)))) + geom_point(stat="summary", size=2)+stat_smooth()
+train2 %>% ggplot(aes(x=floor, y=abs(pred-log(price_doc+1)))) + geom_point(stat="summary", size=2)+stat_smooth()+facet_grid(product_type~.)
 
-train2 %>% ggplot(aes(x=num_room, y=abs(pred-log(price_doc+1)))) + geom_point(stat="summary", size=2)+stat_smooth()
+train2 %>% ggplot(aes(x=num_room, y=abs(pred-log(price_doc+1)))) + geom_point(stat="summary", size=2)+stat_smooth()+facet_grid(product_type~.)
 
 ```
 
