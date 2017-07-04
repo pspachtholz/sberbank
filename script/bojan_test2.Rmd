@@ -1,0 +1,630 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+require(Matrix)
+require(xgboost)
+require(data.table)
+require(dplyr)
+require(ggplot2)
+require(stringr)
+library(tidyr)
+library(lubridate)
+library(rgdal)
+library(geosphere)
+train <- fread("../input/train.csv", sep=",", na.strings = "NA")
+test <- fread("../input/test.csv", sep=",", na.strings = "NA")
+train_lat_lon <- fread('../input/train_lat_lon.csv')
+test_lat_lon <- fread('../input/test_lat_lon.csv')
+address_fix <- fread('../input/address_fix.csv',sep=";")
+
+len_train <- length(train)
+len_test <- length(test)
+full <- bind_rows(train,test)
+
+address_fix <- fread('../input/address_fix.csv',sep=";")
+fix_ids = which(!is.na(match(full$id, address_fix$id)))
+fix_columns = colnames(address_fix)
+full[fix_ids, fix_columns] = address_fix
+
+
+#train <- train %>% left_join(select(train_lat_lon,lat,lon,id), by="id")
+#test <- test %>% left_join(select(test_lat_lon,lat,lon,id), by="id")
+
+#knn_train <- fread('../input/predictions_knn_train.csv')
+#knn_test <- fread('../input/predictions_knn_test.csv')
+
+
+```
+
+## add knn predictions
+
+```{r}
+#train <- train %>% left_join(select(knn_train,id,knn),by="id")
+#test <- test %>% left_join(select(knn_test,id,knn),by="id")
+
+```
+
+### Grouping appartments together
+Some appartments seem to be in the same building. They have the same sub_area and distance to metro.
+```{r}
+  # assign a common name to them
+  train <- train %>% mutate(appartment_name = factor(str_c(sub_area,format(metro_km_avto,digits=3))))
+  test <- test %>% mutate(appartment_name = factor(str_c(sub_area,format(metro_km_avto,digits=3))))
+  
+  # get the number of appartments in group
+  train <- train %>% 
+    group_by(appartment_name) %>% 
+    tally() %>% 
+    right_join(train,by="appartment_name")
+
+  test <- test %>% 
+    group_by(appartment_name) %>% 
+    tally() %>% 
+    right_join(test,by="appartment_name")
+```
+
+
+
+## build year
+```{r}
+
+train <- train %>% mutate(build_year = ifelse(build_year > 1000000, mean(as.numeric(c(str_sub(build_year,1,4),str_sub(build_year,5,8)))), build_year))
+
+train <- train %>% mutate(build_year = ifelse(build_year > 2900, as.numeric(str_c("1",str_sub(build_year,2,4))), build_year))
+
+test$build_year[test$id==32484]<-2014
+test$build_year[test$id==33469]<-2015
+```
+
+
+```{r }
+  # year
+  train <- train %>% 
+    mutate(year = year(timestamp))
+  test <- test %>% 
+    mutate(year = year(timestamp))
+  
+  # year_month
+  train <- train %>% 
+    mutate(year_month = make_date(year=year(timestamp),month=month(timestamp)))
+  test <- test %>% 
+    mutate(year_month = make_date(year=year(timestamp),month=month(timestamp)))
+  
+  train <- train %>% 
+    mutate(year_quarter = str_c(year(timestamp),quarter(timestamp),sep="_"))
+  
+  test <- test %>% 
+    mutate(year_quarter = str_c(year(timestamp),quarter(timestamp),sep="_"))  
+```
+
+#### cleaning
+```{r}
+train <- train %>% mutate(price_persqm = price_doc/full_sq)
+
+#arrange(train,desc(price_persqm)) %>% select(id,price_persqm, price_doc, full_sq, product_type, year, appartment_name, n, everything()) %>% View()
+
+#train %>% filter(id %in% c(22415,26366)) %>% select(id,price_persqm, price_doc, full_sq, product_type, year, appartment_name, n, everything()) %>% View()
+
+
+######## full square ###########
+
+# 5326
+train$full_sq[train$id %in% c(3530)] <- train$full_sq[train$id %in% c(3530)] / 100
+
+# 394, 388, 407, 603, 634, 412, 461, 325, 353, 729, 635
+train$full_sq[train$id %in% c(1613,27796,3599,23718,18344,2428,7210,129,1481,2783,5947)] <- train$full_sq[train$id %in% c(1613,27796,3599,23718,18344,2428,7210,129,1481,2783,5947)] / 10
+
+# one strange <- probably 2 flats
+train$full_sq[train$id %in% c(16746)] <- train$full_sq[train$id %in% c(16746)]/2
+train$price_doc[train$id %in% c(16746)] <- train$price_doc[train$id %in% c(16746)]/2
+train$num_room[train$id %in% c(16746)] <- train$num_room[train$id %in% c(16746)]/2
+
+# swapped life_sq and full_sq and error in life_sq
+train$full_sq[train$id == 1189]<-44
+train$life_sq[train$id == 1189]<-29
+
+# another one not comparable to others + strange num_room
+train$full_sq[train$id == 20165]<-73
+
+
+## low full_sq
+errors <- train %>% filter(full_sq <= 6)
+for (i in 1:nrow(errors)) {
+  tmp <- train %>% filter(appartment_name == errors$appartment_name[i], full_sq>10, year==errors$year[i])
+  if (nrow(tmp)>=10) {
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)
+  } else {
+  tmp <- train %>% filter(appartment_name == errors$appartment_name[i], full_sq>10)
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)
+  }
+  errors$full_sq[i] <- round(errors$price_doc[i]/tmp_ppsqm)
+}
+train$full_sq[match(errors$id,train$id)]<-errors$full_sq
+
+## high full_sq
+errors <- train %>% filter(full_sq >= 210, product_type=="OwnerOccupier", n>=2)
+for (i in 1:nrow(errors)) {
+  tmp <- train %>% filter(appartment_name == errors$appartment_name[i], full_sq<210, year==errors$year[i])
+  if (nrow(tmp)>=10) {
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)
+  } else {
+  tmp <- train %>% filter(appartment_name == errors$appartment_name[i], full_sq<210)
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)
+  }
+  errors$full_sq[i] <- round(errors$price_doc[i]/tmp_ppsqm)
+}
+train$full_sq[match(errors$id,train$id)]<-errors$full_sq
+
+
+### full_sq in test
+
+#test %>% select(id, timestamp, full_sq, life_sq, kitch_sq, num_room, appartment_name, n, everything()) %>% View()
+
+test$full_sq[test$id==35108]<- test$full_sq[test$id==35108]/10
+test$full_sq[test$id==30938]<- test$life_sq[test$id==30938]
+test$full_sq[test$id == 35857] <- 78
+test$full_sq[test$id == 33278] <- 33.8
+test$life_sq[test$id == 33278] <- 14.8
+
+
+### strange price per sqm
+
+train$price_doc2 <- NA
+
+# 111111112 extreme price
+train$price_doc[train$id==2121]<-train$price_doc[train$id==2121]/10
+
+train <- train %>% mutate(price_persqm = price_doc/full_sq)
+
+errors <- train %>% filter(price_persqm <= 15000, product_type=="OwnerOccupier")
+for (i in 1:nrow(errors)) {
+  tmp <- train %>% filter(appartment_name == errors$appartment_name[i], price_persqm>15000, year==errors$year[i], product_type=="OwnerOccupier")
+  if (nrow(tmp)>=10) {
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)
+  } else if (nrow(tmp)>1) {
+  tmp <- train %>% filter(appartment_name == errors$appartment_name[i], price_persqm>15000, product_type=="OwnerOccupier")
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)
+  } else {
+  tmp <- train %>% filter(str_detect(train$appartment_name,str_c('^',str_split(errors$appartment_name[i],' ')[[1]][1])), product_type=="OwnerOccupier")
+    tmp_ppsqm <- mean(tmp$price_doc/tmp$full_sq)    
+  }
+  errors$price_doc[i] <- round(tmp_ppsqm*errors$full_sq[i])
+}
+train$price_doc[match(errors$id,train$id)]<-errors$price_doc
+
+
+train <- train %>% mutate(price_persqm = price_doc/full_sq)
+
+
+
+### full_sq < life_sq
+
+## train
+# 7478 -> 76
+train$life_sq[train$id==13549]<-76
+
+# full 82 life 802
+train$life_sq[train$id==9649]<-82
+
+train$life_sq[train$id==1866]<-18
+train$life_sq[train$id==22788]<-63.7
+
+train <- train %>% mutate(life_sq=ifelse(life_sq/3>full_sq,life_sq/10, life_sq))
+
+train[!is.na(train$full_sq) & !is.na(train$life_sq) & train$full_sq<train$life_sq,c("full_sq", "life_sq")] <- train[!is.na(train$full_sq) & !is.na(train$life_sq) & train$full_sq<train$life_sq,c("life_sq", "full_sq")] 
+
+
+## test
+test <- test %>% mutate(life_sq=ifelse(life_sq/3>full_sq,life_sq/10, life_sq))
+test[!is.na(test$full_sq) & !is.na(test$life_sq) & test$full_sq<test$life_sq,c("full_sq", "life_sq")] <- test[!is.na(test$full_sq) & !is.na(test$life_sq) & test$full_sq<test$life_sq,c("life_sq", "full_sq")] 
+
+
+
+######## kitchen square ###########
+## train
+train$kitch_sq[train$kitch_sq>1000]<-NA
+train$build_year[train$id==13120]<-1970
+
+train$kitch_sq[train$id==11523]<-6
+train$kitch_sq[train$id==26239]<-0
+train$kitch_sq[train$id==29000]<-17
+train$kitch_sq[train$id==26853]<-8
+train$kitch_sq[train$id==9175]<-7
+train$kitch_sq[train$id==12248]<-3
+train$kitch_sq[train$id==23219]<-4
+
+## test
+test$kitch_sq[test$kitch_sq>=1000]<-NA
+test$kitch_sq[test$id==34333] <- test$kitch_sq[test$id==34333]/10
+test$kitch_sq[test$id==32505] <- 1
+test$kitch_sq[test$id==36970] <- test$kitch_sq[test$id==36970]/10
+
+
+######## number of rooms ############
+## train
+train <- train %>% mutate(sq_proom = full_sq/num_room)
+#train %>% select(id, timestamp, price_doc, full_sq, life_sq, kitch_sq, num_room, sq_proom, floor, max_floor, appartment_name, n, everything()) %>% View()
+
+train$num_room[train$id %in% c(11624,26716, 25654, 11020, 17431, 13425,14592,12201)] <- 1 # 17 and 19 rooms
+train$num_room[train$id %in% c(17767,19393)] <- 2
+train$max_floor[train$id %in% c(17767)] <- 10 # swapped
+train$num_room[train$id %in% c(26002)] <- 1
+train$max_floor[train$id %in% c(26002)] <- 5 # swapped
+train$num_room[train$id %in% c(29175)] <- 2
+
+test <- test %>% mutate(sq_proom = full_sq/num_room)
+#test %>% select(id, timestamp, full_sq, life_sq, kitch_sq, num_room, sq_proom, floor, max_floor, appartment_name, n, everything()) %>% View()
+
+## test
+test$full_sq[test$id==36824]<-47
+test$life_sq[test$id==36824]<-1
+
+test$num_room[test$id %in% c(37787,33648,31903,31891)]<-1
+
+
+######## floor ###########
+## train
+train$floor[train$id==23587]<-7
+
+
+######## max_floor ######
+train$max_floor[train$id==20725]<-NA
+train$max_floor[train$id==24023]<-NA
+train$max_floor[train$id==21737]<-17
+train$max_floor[train$id==25943]<-17
+train$max_floor[train$id==21855]<-25
+
+
+######## state #####
+train$state[train$id==10092]<-3
+
+#arrange(train,desc(price_persqm)) %>% select(id,price_persqm, price_doc,price_doc2, full_sq, full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
+
+#arrange(train,desc(price_persqm)) %>% select(id,price_persqm, price_doc,price_doc2, full_sq, full_sq2, product_type, year, appartment_name, appartment_price, n, everything()) %>% View()
+
+```
+
+```{r}
+#train %>% ggplot(aes(x=year, y=full_sq))+geom_line(stat="summary", color="red")+geom_point(stat="summary", size=3, color="red")
+
+#data.frame(t(sort(cor(train[sapply(train, is.numeric)])[,"year"],decreasing=T))) %>% gather() %>% ggplot(aes(x=reorder(key,value),y=value))+geom_bar(stat="identity")+coord_flip()
+
+```
+
+```{r}
+# equalize strange price docs in every year
+re_investment <- train %>% 
+  mutate(year=str_sub(timestamp,1,4)) %>% 
+  filter(product_type=='Investment',year>='2011') %>% 
+  group_by(year) %>% 
+  summarise(n=n(),
+            n1M=sum(ifelse(price_doc<=1000000,1,0))/n(),
+            n2M=sum(ifelse(price_doc==2000000,1,0))/n(),
+            n3M=sum(ifelse(price_doc==3000000,1,0))/n(),
+            nn1M=n1M*n(),
+            nn2M=n2M*n(),
+            nn3M=n3M*n())
+
+goal <- re_investment %>% filter(year==2015) %>% mutate(n1M = n1M/2, n2M=n2M/3, n3M=n3M/2)
+
+re_investment<-re_investment %>% 
+  mutate(m1M = n1M/goal$n1M, m2M=n2M/goal$n2M, m3M = n3M/goal$n3M) %>% 
+  mutate(smp1M = floor(n*n1M/m1M), smp2M = floor(n*n2M/m2M), smp3M = floor(n*n3M/m3M))
+
+
+## tmp = sampled strange price docs
+years <- 2011:2015
+tmp <- list()
+for (i in seq_along(years)){
+  tmp[[i]] <- bind_rows(sample_n(filter(train,product_type=='Investment'&year==years[i]&price_doc<=1000000),re_investment$smp1M[re_investment$year==years[i]],replace=TRUE),
+    sample_n(filter(train,product_type=='Investment'&year==years[i]&price_doc==2000000),re_investment$smp2M[re_investment$year==years[i]], replace=TRUE),
+  sample_n(filter(train,product_type=='Investment'&year==years[i]&price_doc==3000000),re_investment$smp3M[re_investment$year==years[i]],replace=TRUE))
+}
+tmp <- bind_rows(tmp)
+
+# tmp2 = normal price docs
+tmp2 <- train %>% filter((product_type=='OwnerOccupier') | (between(year, 2011, 2015) & product_type =='Investment' & price_doc > 1000000 & price_doc != 2000000 & price_doc != 3000000)) 
+
+train <- bind_rows(tmp, tmp2) %>% arrange(id)
+
+```
+
+
+
+```{r}
+test <- test %>% mutate(product_type=as.character(product_type))
+
+test <- test %>% mutate(product_type = ifelse(is.na(product_type) & build_year>2016,"OwnerOccupier",product_type)) # OwnerOccupier
+
+test <- test %>% mutate(product_type = ifelse(is.na(product_type),"Investment",product_type)) # Investment
+
+test <- test %>% mutate(product_type = as.factor(product_type))
+```
+
+
+```{r}
+  # number of floors to the top of house
+  train <- train %>% mutate(floor_from_top = max_floor - floor)
+  test <- test %>% mutate(floor_from_top = max_floor - floor)
+  
+  # relative position of floor in house
+  train <- train %>% mutate(floor_by_maxfloor = floor/max_floor)
+  test <- test %>% mutate(floor_by_maxfloor = floor/max_floor)  
+  
+  # average room size
+  train <- train %>% mutate(roomsize = full_sq/num_room) 
+  test <- test %>% mutate(roomsize = full_sq/num_room)   
+  
+  # relative proportion of living area
+  train <- train %>% mutate(life_proportion = life_sq/full_sq)
+  test <- test %>% mutate(life_proportion = life_sq/full_sq)  
+  
+  # relative proportion of kitchen area
+  train <- train %>% mutate(kitchen_proportion = kitch_sq/full_sq)
+  test <- test %>% mutate(kitchen_proportion = kitch_sq/full_sq)  
+  
+  # extra area
+  train <- train %>% mutate(extra_area = full_sq - life_sq)
+  test <- test %>% mutate(extra_area = full_sq - life_sq)  
+  
+  # kitch diff
+  train <- train %>% mutate(kitch_diff = full_sq - kitch_sq)
+  test <- test %>% mutate(kitch_diff = full_sq - kitch_sq)    
+  
+  # age of house at time of sale
+  train <- train %>% mutate(age_at_sale = year(timestamp)-build_year) 
+  test <- test %>% mutate(age_at_sale = year(timestamp)-build_year) 
+
+  # ab vom schuss
+  train <- train %>% mutate(ab_vom_schuss = public_transport_station_km * kremlin_km)
+  test <- test %>% mutate(ab_vom_schuss = public_transport_station_km * kremlin_km)  
+```
+
+
+```{r}
+
+sample_submission <- read.csv("../input/sample_submission.csv")
+
+# normalize price_doc
+train <- train %>% group_by(product_type, year_quarter) %>% mutate(price_norm = (price_doc-mean(price_doc,na.rm=T))/sd(price_doc,na.rm=T)) %>% ungroup()
+
+# normalize full_sq
+train <- train %>% group_by(product_type,year_quarter) %>% mutate(full_sq_norm =(full_sq-mean(full_sq,na.rm=T))/sd(full_sq,na.rm=T)) %>% ungroup()
+
+test <- test %>% group_by(product_type,year_quarter) %>% mutate(full_sq_norm =(full_sq-mean(full_sq,na.rm=T))/sd(full_sq,na.rm=T)) %>% ungroup()
+
+cv <- train %>% filter(year==2012)
+cv_id <- cv$id
+
+train <- train %>% filter(!is.na(price_norm) & year >= 2011)
+train_id <- setdiff(train$id,cv_id)
+
+train$product_type <- as.factor(train$product_type)
+
+x_train <- train %>% 
+  select(-c(id, timestamp, price_doc, price_persqm, price_doc2, appartment_name, n, year,year_quarter, sq_proom, year_month)) 
+
+y_train <- x_train$price_norm
+x_train <- select(x_train, -price_norm)
+
+x_cv <- cv %>% 
+  select(-c(id, timestamp, price_doc, price_persqm, price_doc2, appartment_name, n, year,year_quarter, sq_proom, year_month))
+
+y_cv <- x_cv$price_norm
+x_cv <- select(x_cv, -price_norm)
+
+x_test <- test %>% select(-c(id, timestamp, appartment_name, n, year,year_month, year_quarter, sq_proom))
+
+len_train <- nrow(x_train)
+len_cv <- nrow(x_cv)
+len_test <- nrow(x_test)
+
+full <- bind_rows(x_train, x_cv, x_test)
+
+features <- colnames(full)
+
+# yearly folds for CV
+rownums <- 1:dim(train)[1]
+cuts<-cut(rownums,5,labels=FALSE)
+folds <- split(rownums, cuts)
+
+for (f in features) {
+  if ((class(full[[f]])=="factor") || (class(full[[f]])=="character")) {
+    #cat("VARIABLE : ",f,"\n")
+    levels <- unique(full[[f]])
+    full[[f]] <- as.numeric(factor(full[[f]], levels=levels))
+  }
+  if (class(full[[f]])=="Date"){
+    full[[f]]<-as.numeric(full[[f]])
+  }
+}
+
+x_train = full[1:len_train,]
+x_cv = full[(len_train+1):(len_train+len_cv),]
+x_test = full[(len_train+len_cv+1):(len_train+len_cv+len_test),]
+
+dtrain = xgb.DMatrix(as.matrix(x_train), label=y_train)
+dcv = xgb.DMatrix(as.matrix(x_cv), label=y_cv)
+dtest = xgb.DMatrix(as.matrix(x_test))
+
+xgb_params = list(
+  seed = 0,
+  colsample_bytree = 1,
+  subsample = 1,
+  eta = 0.05,
+  objective = 'reg:linear',
+  max_depth = 5,
+  num_parallel_tree = 1,
+  min_child_weight = 2
+)
+
+# result = xgb.train(xgb_params, dtrain, 840, watchlist=list(train=dtrain,validation=dcv))
+
+
+res = xgb.cv(xgb_params,
+            dtrain,
+            nrounds=2000,
+            nfold=5,
+            early_stopping_rounds=50,
+            print_every_n = 10,
+            verbose= 1,
+            maximize=FALSE,
+            prediction=TRUE, 
+            folds = folds)
+
+best_nrounds = res$best_iteration
+
+gbdt = xgb.train(xgb_params, dtrain, best_nrounds)
+
+cv_prediction <- predict(gbdt, dcv)
+
+#rmse
+sqrt(mean((cv_prediction-y_cv)^2))
+
+# #rmsle
+# cv2 <- cv %>% bind_cols(data.frame(pred=cv_prediction))
+# cv2 <- train %>% filter(year==2013) %>% group_by(product_type) %>% summarize(m=mean(price_doc, na.rm=T),esd=sd(price_doc,na.rm=T)) %>% right_join(cv2,by=c("product_type")) %>% mutate(pred2 = pred*esd+m)
+# sqrt(mean((log(cv2$pred2)-log(cv2$price_doc))^2))
+
+prediction <- predict(gbdt,dtest)
+cat(mean(prediction))
+
+ggplot(data.frame(p=prediction), aes(x=p)) + geom_density()+geom_density(data=train, aes(x=price_norm), color="red")
+
+test2 <- test %>% bind_cols(data.frame(pred=prediction))
+test2 <- train %>% filter(year_quarter %in% c("2013_1", "2013_2")) %>% group_by(product_type) %>% summarize(m=mean(price_doc, na.rm=T),esd=sd(price_doc,na.rm=T)) %>% right_join(test2,by="product_type") %>% mutate(pred2 = pred*esd+m)
+
+sample_submission$price_doc <- test2$pred2
+mean(test2$pred2)
+range(test2$pred2)
+
+write.csv(sample_submission, "XGB_R_output_5.csv", row.names = F)
+
+
+imp_matrix_all <- xgb.importance(colnames(dtrain),gbdt)
+
+ggplot(head(imp_matrix_all,50),aes(x=reorder(Feature,Gain),y=Gain))+geom_bar(stat="identity")+coord_flip(ylim=c(0,0.4))+theme_bw()+labs(x="")
+
+# bind cv predictions to train
+train2 <- train %>% filter(id %in% train_id) %>% bind_cols(data.frame(pred=res$pred)) %>% mutate(set="train")
+
+```
+
+# Where does model over underfit
+```{r, fig.width=7, fig.height=5}
+
+train2 %>% ggplot(aes(x=price_norm,y=pred))+geom_point()+geom_abline(slope=1,intercept=0, color="darkred")+facet_grid(product_type~year)
+
+train2 %>% ggplot(aes(x=full_sq, y=abs(pred-price_norm))) + geom_point(stat="summary", size=2)+stat_smooth()+facet_grid(product_type~.)
+
+train2 %>% ggplot(aes(x=life_sq, y=abs(pred-price_norm))) + geom_point(stat="summary", size=2)+stat_smooth()+facet_grid(product_type~.)
+
+train2 %>% ggplot(aes(x=floor, y=abs(pred-price_norm))) + geom_point(stat="summary", size=2)+stat_smooth()+facet_grid(product_type~.)
+
+train2 %>% ggplot(aes(x=num_room, y=abs(pred-price_norm))) + geom_point(stat="summary", size=2)+stat_smooth()+facet_grid(product_type~.)
+
+```
+
+
+```{r, fig.width=10, fig.height=7}
+train2 %>% ggplot(aes(x=pred))+stat_density(geom="line", color="darkgreen")+facet_grid(product_type~year)+stat_density(aes(x=price_norm),geom="line", color="darkred")
+```
+
+```{r}
+train2 %>% group_by(product_type, year_month) %>% summarize(mean(price_doc),mean(exp(pred)-1))
+
+train2 %>% ggplot(aes(x=(year_month), y=exp(pred)-1, color=product_type))+geom_line(stat="summary", size=1.5)+theme(axis.text.x = element_text(angle=-45))+geom_line(data=train, aes(x=year_month, y=price_doc, group=product_type), stat="summary", alpha=0.2, size=1)+theme_bw()
+
+train2 %>% ggplot(aes(x=(year), y=exp(pred)-1, color=product_type))+geom_line(stat="summary", size=1.5)+theme(axis.text.x = element_text(angle=-45))+geom_line(data=train, aes(x=year, y=price_doc, group=product_type), stat="summary", alpha=0.2, size=1)+theme_bw()
+
+
+x_train %>% bind_cols(data.frame(pred=res$pred)) %>% ggplot(aes(x=full_sq,y=pred))+geom_point()+facet_grid(product_type~.)
+
+x_train %>% bind_cols(data.frame(pred=res$pred)) %>% ggplot(aes(x=life_sq,y=pred))+geom_point()+facet_grid(product_type~.)
+
+
+```
+
+```{r}
+test2 <- test %>% bind_cols(data.frame(pred=prediction)) %>% mutate(set="test")
+
+full2 <- bind_rows(train2, test2)
+
+ggplot(full2,aes(x=full_sq,y=pred, color=set))+geom_point(stat="summary")+facet_grid(product_type~.)
+ggplot(full2,aes(x=year_month,y=pred, color=set))+geom_point(stat="summary")+facet_grid(product_type~.)
+
+
+```
+
+
+
+# plot macro data
+
+```{r}
+macro <- macro %>% 
+    mutate(year_quarter = str_c(year(timestamp),quarter(timestamp),sep="_"))
+
+ggplot(macro,aes(x=year_quarter,y=oil_urals))+geom_point(stat="summary")+theme(axis.text.x = element_text(angle=-45))+geom_line(stat="summary")
+
+ggplot(macro,aes(x=year_quarter,y=rent_price_1room_eco))+geom_point(stat="summary")+theme(axis.text.x = element_text(angle=-45))+geom_line(stat="summary")
+
+ggplot(macro,aes(x=year_quarter,y=rent_price_2room_eco))+geom_point(stat="summary")+theme(axis.text.x = element_text(angle=-45))+geom_line(stat="summary")
+
+ggplot(macro,aes(x=year_quarter,y=rent_price_3room_eco))+geom_point(stat="summary")+theme(axis.text.x = element_text(angle=-45))+geom_line(stat="summary")
+
+
+```
+```{r}
+train <- train %>% left_join(macro,by="timestamp")
+tmp <- train
+tmp2<-tmp %>% group_by(year_quarter.x) %>% summarize(m1=mean(price_doc),m2=mean(rent_price_3room_eco))
+cor(tmp2$m1,tmp2$m2)
+ggplot(tmp2, aes(x=m2,y=m1))+geom_point()+geom_smooth(method="lm")
+```
+
+```{r, warning=FALSE, message=FALSE}
+
+full <- 
+
+full$train_test <- "no"
+full$train_test[1:(len_train+len_cv)] <- "train"
+full$train_test[(len_train+len_cv+1):nrow(full)] <- "test"
+
+full %>% mutate(product_type=ifelse(is.na(product_type),"Investment",product_type))
+
+full %>% filter(full_sq <= 200) %>% ggplot(aes(x=full_sq)) + stat_density(geom="line",position="identity", aes(group=train_test,color=train_test),size=1.2,na.rm=T)+facet_grid(product_type~.)+theme_bw()
+
+full %>% filter(life_sq <= 100) %>% ggplot(aes(x=life_sq)) + stat_density(geom="line",position="identity", aes(group=train_test,color=train_test),size=1.2,na.rm=T)+facet_grid(product_type~.)+theme_bw()
+
+full %>% filter(kitch_sq <= 25) %>% ggplot(aes(x=kitch_sq)) + stat_density(geom="line",position="identity", aes(group=train_test,color=train_test),size=1.2,na.rm=T)+facet_grid(product_type~.)+theme_bw()
+
+full %>% filter(state <= 4) %>% ggplot(aes(x=state)) + stat_density(geom="line",position="identity", aes(group=train_test,color=train_test),size=1.2,na.rm=T)+facet_grid(product_type~.)+theme_bw()
+
+
+full %>% filter(kitchen_proportion <= 0.3) %>% ggplot(aes(x=kitchen_proportion)) + stat_density(geom="line",position="identity", aes(group=train_test,color=train_test),size=1.2,na.rm=T)+facet_grid(product_type~.)+theme_bw()
+
+full %>% filter(extra_area <= 100) %>% ggplot(aes(x=extra_area)) + stat_density(geom="line",position="identity", aes(group=train_test,color=train_test),size=1.2,na.rm=T)+facet_grid(product_type~.)+theme_bw()
+
+full %>% filter(age_at_sale <= 10) %>% ggplot(aes(x=age_at_sale)) + stat_density(geom="line",position="identity", aes(group=train_test,color=train_test),size=1.2,na.rm=T)+facet_grid(product_type~.)+theme_bw()
+
+```
+
+```{r}
+andy1 <- fread('adjusted_result-2.csv')
+andy2 <- fread('same_result.csv')
+my1 <- fread('XGB_R_output_1.csv')
+my2 <- fread('XGB_R_output_2.csv')
+my3 <- fread('XGB_R_output_3.csv')
+my4 <- fread('XGB_R_output_4.csv')
+my5 <- fread('XGB_R_output_5.csv')
+
+r <- data.frame(id=andy1$id, a1=andy1$price_doc, a2=andy2$price_doc, m1=my1$price_doc, m2=my2$price_doc, m3=my3$price_doc, m4=my4$price_doc, m5=my5$price_doc)
+pred <- data.frame(id=r$id, price_doc = round(0.7*r$a1 + 0.3*r$m4))
+pred <- data.frame(id=r$id, price_doc = round(0.2*r$a1 + 0.8*r$m5))
+
+fwrite(pred, 'last1.csv')
+```
+
